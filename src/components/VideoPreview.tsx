@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useEditorStore } from '@/store/editorStore';
 import * as PIXI from 'pixi.js';
+import { gsap } from 'gsap'; // Import GSAP for smooth transitions
 const { ColorMatrixFilter } = PIXI;
 
 const VideoPreview = () => {
@@ -10,7 +11,7 @@ const VideoPreview = () => {
   const [isPlaying, setIsPlaying] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const selectedAsset = assets.find((a) => a.id === selectedAssetId);
+  const selectedAsset = useMemo(() => assets.find((a) => a.id === selectedAssetId), [assets, selectedAssetId]);
 
   const togglePlayPause = () => {
     if (videoRef.current) {
@@ -47,13 +48,106 @@ const VideoPreview = () => {
     return () => {
       app.destroy(true, { children: true });
     };
-  }, []);
+  }, []); // Run only once on mount
+
+  // Enable drag-and-resize functionality
+  const makeInteractive = (sprite: PIXI.Sprite) => {
+    sprite.interactive = true;
+
+    let isDragging = false;
+    let isResizing = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = sprite.width;
+    let startHeight = sprite.height;
+
+    const resizeHandle = new PIXI.Graphics();
+    resizeHandle.beginFill(0xffffff);
+    resizeHandle.drawRect(0, 0, 10, 10);
+    resizeHandle.endFill();
+    resizeHandle.interactive = true;
+    resizeHandle.cursor = 'nwse-resize';
+    resizeHandle.x = sprite.width - 10;
+    resizeHandle.y = sprite.height - 10;
+
+    resizeHandle
+      .on('pointerdown', (event) => {
+        isResizing = true;
+        const { x, y } = event.data.global;
+        startX = x;
+        startY = y;
+        startWidth = sprite.width;
+        startHeight = sprite.height;
+      })
+      .on('pointermove', (event) => {
+        if (isResizing) {
+          const { x, y } = event.data.global;
+          const deltaX = x - startX;
+          const deltaY = y - startY;
+          sprite.width = Math.max(50, startWidth + deltaX);
+          sprite.height = Math.max(50, startHeight + deltaY);
+          resizeHandle.x = sprite.width - 10;
+          resizeHandle.y = sprite.height - 10;
+        }
+      })
+      .on('pointerup', () => {
+        isResizing = false;
+      })
+      .on('pointerupoutside', () => {
+        isResizing = false;
+      });
+
+    sprite.addChild(resizeHandle);
+
+    sprite
+      .on('pointerdown', (event) => {
+        if (!isResizing) {
+          isDragging = true;
+          const { x, y } = event.data.global;
+          startX = x - sprite.x;
+          startY = y - sprite.y;
+        }
+      })
+      .on('pointermove', (event) => {
+        if (isDragging) {
+          const { x, y } = event.data.global;
+          sprite.x = x - startX;
+          sprite.y = y - startY;
+        }
+      })
+      .on('pointerup', () => {
+        isDragging = false;
+      })
+      .on('pointerupoutside', () => {
+        isDragging = false;
+      });
+  };
 
   // Render selected asset
   useEffect(() => {
     if (!selectedAsset || !pixiAppRef.current) return;
     const app = pixiAppRef.current;
     app.stage.removeChildren();
+
+    const applyBrightnessAndContrast = (sprite: PIXI.Sprite, brightness: number, contrast: number) => {
+      // Smoothly transition brightness using GSAP
+      const brightnessValue = Math.floor(255 * brightness);
+      const tintColor = (brightnessValue << 16) | (brightnessValue << 8) | brightnessValue;
+
+      gsap.to(sprite, {
+        tint: tintColor,
+        duration: 0.5, // Adjust duration for smoothness
+        onUpdate: () => {
+          console.log('Tweening brightness:', brightness, 'Tint color:', tintColor);
+        },
+      });
+
+      // Apply contrast using ColorMatrixFilter
+      const filter = new ColorMatrixFilter();
+      filter.reset();
+      filter.contrast(contrast, false);
+      sprite.filters = [filter];
+    };
 
     if (selectedAsset.type === 'image') {
       const image = new Image();
@@ -62,32 +156,19 @@ const VideoPreview = () => {
       image
         .decode()
         .then(() => {
-          const texture = PIXI.Texture.from(image); // Use Texture.from to create a texture from the image
+          const texture = PIXI.Texture.from(image);
           const sprite = new PIXI.Sprite(texture);
           sprite.width = app.screen.width;
           sprite.height = app.screen.height;
 
-          // Simulate brightness using the tint property
           const brightness = typeof selectedAsset.filters.brightness === 'number'
-            ? Math.max(0, Math.min(selectedAsset.filters.brightness, 1)) // Clamp brightness between 0 and 1
+            ? Math.max(0, Math.min(selectedAsset.filters.brightness, 1))
             : 1;
 
-          const brightnessValue = Math.floor(255 * brightness); // Convert brightness to a 0-255 scale
-          const tintColor = (brightnessValue << 16) | (brightnessValue << 8) | brightnessValue; // RGB color
-          sprite.tint = tintColor;
-
-          console.log('Applying brightness via tint:', brightness, 'Tint color:', tintColor);
-
-          // Apply contrast using ColorMatrixFilter
-          const filter = new ColorMatrixFilter();
-          filter.reset();
-          filter.contrast(selectedAsset.filters.contrast, false);
-          sprite.filters = [filter];
+          applyBrightnessAndContrast(sprite, brightness, selectedAsset.filters.contrast);
+          makeInteractive(sprite);
 
           app.stage.addChild(sprite);
-
-          console.log('Sprite filters:', sprite.filters);
-          console.log('App stage children:', app.stage.children);
         })
         .catch((error) => {
           console.error('Error decoding image:', error);
@@ -107,34 +188,21 @@ const VideoPreview = () => {
         sprite.width = app.screen.width;
         sprite.height = app.screen.height;
 
-        // Simulate brightness using the tint property
         const brightness = typeof selectedAsset.filters.brightness === 'number'
-          ? Math.max(0, Math.min(selectedAsset.filters.brightness, 1)) // Clamp brightness between 0 and 1
+          ? Math.max(0, Math.min(selectedAsset.filters.brightness, 1))
           : 1;
 
-        const brightnessValue = Math.floor(255 * brightness); // Convert brightness to a 0-255 scale
-        const tintColor = (brightnessValue << 16) | (brightnessValue << 8) | brightnessValue; // RGB color
-        sprite.tint = tintColor;
-
-        console.log('Applying brightness via tint:', brightness, 'Tint color:', tintColor);
-
-        // Apply contrast using ColorMatrixFilter
-        const filter = new ColorMatrixFilter();
-        filter.reset();
-        filter.contrast(selectedAsset.filters.contrast, false);
-        sprite.filters = [filter];
+        applyBrightnessAndContrast(sprite, brightness, selectedAsset.filters.contrast);
+        makeInteractive(sprite);
 
         app.stage.addChild(sprite);
-
-        console.log('Sprite filters:', sprite.filters);
-        console.log('App stage children:', app.stage.children);
       });
 
       video.addEventListener('error', (error) => {
         console.error('Error loading video:', error);
       });
     }
-  }, [selectedAsset]);
+  }, [selectedAsset]); // Only re-run when selectedAsset changes
 
   return (
     <div className="flex flex-col justify-center items-center h-full">
