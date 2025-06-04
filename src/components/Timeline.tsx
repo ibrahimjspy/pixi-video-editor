@@ -1,27 +1,55 @@
 'use client';
 
 import { useEditorStore } from '@/store/editorStore';
-import classNames from 'classnames';
+import { EditorElement } from '@/types/editor';
 
 const Timeline = () => {
-  const { assets, selectedAssetId, setSelectedAsset } = useEditorStore();
+  const elements = useEditorStore((state) => state.elements);
+  const selectedElementId = useEditorStore((state) => state.selectedElementId);
+  const setSelectedElement = useEditorStore(
+    (state) => state.setSelectedElement,
+  );
+
+  const getLabel = (el: EditorElement) => {
+    switch (el.type) {
+      case 'image':
+        return '🖼️ Image';
+      case 'video':
+        return '🎬 Video';
+      case 'text':
+        return '🔤 Text';
+      default:
+        return '❓ Unknown';
+    }
+  };
 
   return (
-    <div className="h-full p-4 overflow-x-auto">
-      <div className="text-sm mb-2 text-gray-600">Timeline</div>
-      <div className="flex space-x-2">
-        {assets.map((asset) => (
+    <div style={{ height: '100%', padding: '1rem', overflowX: 'auto' }}>
+      <div style={{ fontSize: '14px', marginBottom: '0.5rem', color: '#666' }}>
+        Timeline
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        {elements.map((el) => (
           <div
-            key={asset.id}
-            className={classNames(
-              'w-32 h-20 rounded border flex items-center justify-center cursor-pointer transition',
-              selectedAssetId === asset.id
-                ? 'bg-blue-500 text-white border-blue-700'
-                : 'bg-gray-200 text-gray-700 border-gray-400 hover:bg-gray-300',
-            )}
-            onClick={() => setSelectedAsset(asset.id)}
+            key={el.id}
+            onClick={() => setSelectedElement(el.id)}
+            style={{
+              width: '128px',
+              height: '80px',
+              borderRadius: '6px',
+              border: '1px solid',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'background 0.2s',
+              backgroundColor:
+                selectedElementId === el.id ? '#3b82f6' : '#e5e7eb',
+              color: selectedElementId === el.id ? '#ffffff' : '#333333',
+              borderColor: selectedElementId === el.id ? '#1e40af' : '#9ca3af',
+            }}
           >
-            {asset.type === 'video' ? '🎬 Video' : '🖼️ Image'}
+            {getLabel(el)}
           </div>
         ))}
       </div>

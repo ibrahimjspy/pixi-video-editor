@@ -1,7 +1,7 @@
 // pages/index.tsx
 'use client';
 
-import Sidebar from '@/components/Sidebar';
+import Sidebar from '@/components/sidebar/Sidebar';
 import Timeline from '@/components/Timeline';
 import VideoPreview from '@/components/VideoPreview';
 

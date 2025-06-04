@@ -1,50 +1,35 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // store/editorStore.ts
 import { create } from 'zustand';
-
-export type AssetType = 'video' | 'image';
-
-export interface Asset {
-  id: string;
-  type: AssetType;
-  file: File;
-  url: string;
-  filters: {
-    brightness: number;
-    contrast: number;
-    sharpness: number;
-  };
-}
+import { EditorElement } from '@/types/editor';
 
 interface EditorState {
-  assets: Asset[];
-  selectedAssetId: string | null;
-  addAsset: (asset: Asset) => void;
-  setSelectedAsset: (id: string) => void;
-  updateFilters: (id: string, filters: Partial<Asset['filters']>) => void;
-  updateAssetFilter: (
-    id: string,
-    filterName: keyof Asset['filters'],
-    value: number,
-  ) => void;
+  elements: EditorElement[];
+  selectedElementId: string | null;
+  addElement: (element: EditorElement) => void;
+  updateElement: (id: string, updates: Partial<EditorElement>) => void;
+  removeElement: (id: string) => void;
+  setSelectedElement: (id: string | null) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
-  assets: [],
-  selectedAssetId: null,
-  addAsset: (asset) => set((state) => ({ assets: [...state.assets, asset] })),
-  setSelectedAsset: (id) => set({ selectedAssetId: id }),
-  updateFilters: (id, filters) =>
-    set((state) => ({
-      assets: state.assets.map((a) =>
-        a.id === id ? { ...a, filters: { ...a.filters, ...filters } } : a,
+  elements: [],
+  selectedElementId: null,
+  addElement: (element) =>
+    set((state) => ({ elements: [...state.elements, element] })),
+  updateElement: (id, updates) =>
+    set((state: any) => ({
+      elements: state.elements.map((el: any) =>
+        el.id === id
+          ? { ...el, ...updates, type: el.type } // Ensure type is not overwritten
+          : el,
       ),
     })),
-  updateAssetFilter: (id, filterName, value) =>
+  removeElement: (id) =>
     set((state) => ({
-      assets: state.assets.map((a) =>
-        a.id === id
-          ? { ...a, filters: { ...a.filters, [filterName]: value } }
-          : a,
-      ),
+      elements: state.elements.filter((el) => el.id !== id),
+      selectedElementId:
+        state.selectedElementId === id ? null : state.selectedElementId,
     })),
+  setSelectedElement: (id) => set({ selectedElementId: id }),
 }));
