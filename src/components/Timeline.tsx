@@ -9,15 +9,22 @@ const Timeline = () => {
   const setSelectedElement = useEditorStore(
     (state) => state.setSelectedElement,
   );
+  const deleteElement = useEditorStore((state) => state.removeElement);
 
   const getLabel = (el: EditorElement) => {
     switch (el.type) {
       case 'image':
-        return '🖼️ Image';
+        return (
+          <img
+            src={el.url}
+            alt="Thumbnail"
+            style={{ maxWidth: '100%', maxHeight: '100%' }}
+          />
+        );
       case 'video':
         return '🎬 Video';
       case 'text':
-        return '🔤 Text';
+        return el.text.slice(0, 4) + (el.text.length > 20 ? '...' : '');
       default:
         return '❓ Unknown';
     }
@@ -37,19 +44,44 @@ const Timeline = () => {
               width: '128px',
               height: '80px',
               borderRadius: '6px',
-              border: '1px solid',
+              border: '2px solid',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               cursor: 'pointer',
-              transition: 'background 0.2s',
+              transition: 'background 0.2s, border-color 0.2s',
               backgroundColor:
-                selectedElementId === el.id ? '#3b82f6' : '#e5e7eb',
+                selectedElementId === el.id ? '#2563eb' : '#e5e7eb',
               color: selectedElementId === el.id ? '#ffffff' : '#333333',
-              borderColor: selectedElementId === el.id ? '#1e40af' : '#9ca3af',
+              borderColor: selectedElementId === el.id ? '#1d4ed8' : '#9ca3af',
+              boxShadow:
+                selectedElementId === el.id
+                  ? '0 0 8px rgba(37, 99, 235, 0.6)'
+                  : 'none',
+              position: 'relative',
             }}
           >
             {getLabel(el)}
+            {selectedElementId === el.id && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteElement(el.id);
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '4px',
+                  right: '4px',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  lineHeight: '16px',
+                }}
+              >
+                🗑️
+              </button>
+            )}
           </div>
         ))}
       </div>

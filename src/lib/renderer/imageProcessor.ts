@@ -19,6 +19,8 @@ export const renderImage = (
 
       sprite.width = app.screen.width;
       sprite.height = app.screen.height;
+      sprite.x = element.x;
+      sprite.y = element.y;
 
       const brightness =
         typeof element.filters.brightness === 'number'
@@ -26,7 +28,7 @@ export const renderImage = (
           : 1;
 
       applyFilters(sprite, brightness, element.filters.contrast);
-      makeInteractive(sprite);
+      makeInteractive(sprite, element.id);
 
       onReady(sprite);
     })

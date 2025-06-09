@@ -1,6 +1,9 @@
 import * as PIXI from 'pixi.js';
+import { useEditorStore } from '@/store/editorStore';
 
-export const makeInteractive = (sprite: PIXI.Sprite) => {
+export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
+  const updateElement = useEditorStore.getState().updateElement;
+
   sprite.interactive = true;
 
   let isDragging = false;
@@ -9,6 +12,15 @@ export const makeInteractive = (sprite: PIXI.Sprite) => {
   let startY = 0;
   let startWidth = sprite.width;
   let startHeight = sprite.height;
+
+  let debounceTimeout: NodeJS.Timeout | null = null;
+
+  const debounceUpdate = (updates: Record<string, any>) => {
+    if (debounceTimeout) clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(() => {
+      updateElement(elementId, updates);
+    }, 100); // Adjust debounce delay as needed
+  };
 
   const resizeHandle = new PIXI.Graphics();
   resizeHandle.beginFill(0xffffff);
@@ -33,10 +45,18 @@ export const makeInteractive = (sprite: PIXI.Sprite) => {
         const { x, y } = event.data.global;
         const deltaX = x - startX;
         const deltaY = y - startY;
-        sprite.width = Math.max(50, startWidth + deltaX);
-        sprite.height = Math.max(50, startHeight + deltaY);
+        const newWidth = Math.max(50, startWidth + deltaX);
+        const newHeight = Math.max(50, startHeight + deltaY);
+
+        sprite.width = newWidth;
+        sprite.height = newHeight;
         resizeHandle.x = sprite.width - 10;
         resizeHandle.y = sprite.height - 10;
+
+        debounceUpdate({
+          width: newWidth,
+          height: newHeight,
+        });
       }
     })
     .on('pointerup', () => (isResizing = false))
@@ -56,8 +76,15 @@ export const makeInteractive = (sprite: PIXI.Sprite) => {
     .on('pointermove', (event) => {
       if (isDragging) {
         const { x, y } = event.data.global;
-        sprite.x = x - startX;
-        sprite.y = y - startY;
+        const newX = x - startX;
+        const newY = y - startY;
+        sprite.x = newX;
+        sprite.y = newY;
+
+        debounceUpdate({
+          x: newX,
+          y: newY,
+        });
       }
     })
     .on('pointerup', () => (isDragging = false))

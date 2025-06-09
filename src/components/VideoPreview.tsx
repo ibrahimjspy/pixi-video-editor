@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '@/store/editorStore';
 import * as PIXI from 'pixi.js';
 import { RendererManager } from '@/lib/renderer/RendererManager';
@@ -24,10 +24,7 @@ const VideoPreview = () => {
 
   const elements = useEditorStore((state) => state.elements);
   const selectedElementId = useEditorStore((state) => state.selectedElementId);
-  const selectedElement = useMemo(
-    () => elements.find((el) => el.id === selectedElementId),
-    [elements, selectedElementId],
-  );
+  const selectedElement = elements.find((el) => el.id === selectedElementId);
 
   // Setup Pixi
   useEffect(() => {
@@ -50,6 +47,7 @@ const VideoPreview = () => {
         }
 
         rendererRef.current = new RendererManager(app);
+        rendererRef.current.renderAll(elements, videoRef); // initial render
       });
 
     return () => {
@@ -57,11 +55,11 @@ const VideoPreview = () => {
     };
   }, [width, height]);
 
-  // Render on selected element
+  // Re-render all elements when elements array changes
   useEffect(() => {
-    if (!selectedElement || !rendererRef.current) return;
-    rendererRef.current.render(selectedElement, videoRef);
-  }, [selectedElement]);
+    if (!rendererRef.current) return;
+    rendererRef.current.renderAll(elements, videoRef);
+  }, [elements]);
 
   const togglePlayPause = () => {
     if (videoRef.current) {
@@ -98,12 +96,11 @@ const VideoPreview = () => {
             borderRadius: '4px',
             border: '1px solid #ccc',
             backgroundColor: 'black',
+            color: 'white',
           }}
         >
           {Object.keys(ASPECT_RATIOS).map((ratio) => (
-            <option key={ratio} value={ratio} style={{
-              color: '#333',
-            }}>
+            <option key={ratio} value={ratio} style={{ color: '#333' }}>
               {ratio}
             </option>
           ))}
