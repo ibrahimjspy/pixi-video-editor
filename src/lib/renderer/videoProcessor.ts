@@ -27,12 +27,23 @@ export const renderVideo = (
     sprite.x = element.x;
     sprite.y = element.y;
 
-    const brightness =
-      typeof element.filters.brightness === 'number'
-        ? Math.max(0, Math.min(element.filters.brightness, 1))
-        : 1;
+    // Ensure all filter values have defaults
+    const filters = {
+      brightness: element.filters.brightness ?? 1,
+      contrast: element.filters.contrast ?? 1,
+      sharpness: element.filters.sharpness ?? 0,
+      saturation: element.filters.saturation ?? 1,
+      hue: element.filters.hue ?? 0,
+      blur: element.filters.blur ?? 0,
+      sepia: element.filters.sepia ?? 0,
+      grayscale: element.filters.grayscale ?? 0,
+      invert: element.filters.invert ?? 0,
+      vibrance: element.filters.vibrance ?? 0,
+      gamma: element.filters.gamma ?? 1,
+      noise: element.filters.noise ?? 0,
+    };
 
-    applyFilters(sprite, brightness, element.filters.contrast);
+    applyFilters(sprite, filters);
     makeInteractive(sprite, element.id);
 
     onReady(sprite);

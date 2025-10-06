@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as PIXI from 'pixi.js';
 import { EditorElement } from '@/types/editor';
 import { renderImage } from './imageProcessor';
@@ -16,7 +17,7 @@ export class RendererManager {
     elements: EditorElement[],
     videoRef: React.MutableRefObject<HTMLVideoElement | null>,
   ) {
-    const existingElements = new Map<string, PIXI.DisplayObject>();
+    const existingElements = new Map<string, any>();
 
     // Store existing elements by their IDs
     for (const child of this.app.stage.children) {
@@ -34,13 +35,23 @@ export class RendererManager {
           existingElement.y = element.y;
           existingElement.rotation = element.rotation || 0;
 
-          // Apply filters using the existing logic
+          // Apply filters using the new logic
           if (existingElement instanceof PIXI.Sprite) {
-            applyFilters(
-              existingElement,
-              element.filters.brightness,
-              element.filters.contrast,
-            );
+            const filters = {
+              brightness: element.filters.brightness ?? 1,
+              contrast: element.filters.contrast ?? 1,
+              sharpness: element.filters.sharpness ?? 0,
+              saturation: element.filters.saturation ?? 1,
+              hue: element.filters.hue ?? 0,
+              blur: element.filters.blur ?? 0,
+              sepia: element.filters.sepia ?? 0,
+              grayscale: element.filters.grayscale ?? 0,
+              invert: element.filters.invert ?? 0,
+              vibrance: element.filters.vibrance ?? 0,
+              gamma: element.filters.gamma ?? 1,
+              noise: element.filters.noise ?? 0,
+            };
+            applyFilters(existingElement, filters);
           }
 
           if (element.type === 'text' && existingElement instanceof PIXI.Text) {
@@ -60,21 +71,11 @@ export class RendererManager {
         if (element.type === 'image') {
           renderImage(element, this.app, (sprite) => {
             sprite.name = element.id; // Assign a unique name for tracking
-            applyFilters(
-              sprite,
-              element.filters.brightness,
-              element.filters.contrast,
-            );
             this.app.stage.addChild(sprite);
           });
         } else if (element.type === 'video') {
           renderVideo(element, this.app, videoRef, (sprite) => {
             sprite.name = element.id; // Assign a unique name for tracking
-            applyFilters(
-              sprite,
-              element.filters.brightness,
-              element.filters.contrast,
-            );
             this.app.stage.addChild(sprite);
           });
         } else if (element.type === 'text') {

@@ -13,6 +13,15 @@ export interface BaseElement {
     brightness: number;
     contrast: number;
     sharpness: number;
+    saturation: number;
+    hue: number;
+    blur: number;
+    sepia: number;
+    grayscale: number;
+    invert: number;
+    vibrance: number;
+    gamma: number;
+    noise: number;
   };
 }
 
