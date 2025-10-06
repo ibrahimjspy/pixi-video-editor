@@ -6,6 +6,17 @@ import { v4 as uuidv4 } from 'uuid';
 
 const DEFAULT_TEXT = 'Add your text here';
 
+const FONTS = [
+  'Arial',
+  'Verdana',
+  'Georgia',
+  'Courier New',
+  'Comic Sans MS',
+  'Times New Roman',
+  'Impact',
+  'Trebuchet MS',
+];
+
 const TextPanel = () => {
   const addElement = useEditorStore((s) => s.addElement);
   const updateElement = useEditorStore((s) => s.updateElement);
@@ -27,7 +38,7 @@ const TextPanel = () => {
       rotation: 0,
       fontSize: 32,
       fontFamily: 'Arial',
-      color: '#000000',
+      color: '#ffffff',
       filters: {
         brightness: 1,
         contrast: 1,
@@ -45,116 +56,76 @@ const TextPanel = () => {
   };
 
   return (
-    <div style={{ color: 'black' }}>
-      <div
-        style={{
-          fontWeight: 600,
-          marginBottom: '0.5rem',
-          color: 'black',
-        }}
-      >
-        Text
-      </div>
+    <div>
+      <h3 className="text-sm font-semibold text-white mb-3">✏️ Text Editor</h3>
 
       <button
         onClick={handleAddText}
-        style={{
-          marginBottom: '1rem',
-          padding: '0.5rem',
-          width: '100%',
-          backgroundColor: '#3b82f6',
-          color: '#fff',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: 'pointer',
-        }}
+        className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg font-semibold transition-all shadow-md hover:shadow-lg mb-4"
       >
         ➕ Add Text
       </button>
 
       {element?.type === 'text' && (
-        <div
-          style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
-        >
+        <div className="space-y-4">
           <div>
-            <label
-              style={{
-                fontSize: '13px',
-                display: 'block',
-                marginBottom: '0.25rem',
-              }}
-            >
-              Text
+            <label className="text-xs font-medium text-gray-300 mb-2 block">
+              Text Content
             </label>
             <input
               type="text"
               value={element.text}
               onChange={(e) => handleChange('text', e.target.value)}
-              style={{ width: '100%', padding: '0.25rem', fontSize: '14px' }}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              placeholder="Enter text..."
             />
           </div>
 
-          <div>
-            <label
-              style={{
-                fontSize: '13px',
-                display: 'block',
-                marginBottom: '0.25rem',
-              }}
-            >
-              Font Size
-            </label>
-            <input
-              type="number"
-              min={8}
-              max={200}
-              value={element.fontSize}
-              onChange={(e) =>
-                handleChange('fontSize', parseInt(e.target.value))
-              }
-              style={{ width: '100%', padding: '0.25rem', fontSize: '14px' }}
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-300 mb-2 block">
+                Font Size
+              </label>
+              <input
+                type="number"
+                min={8}
+                max={200}
+                value={element.fontSize}
+                onChange={(e) =>
+                  handleChange('fontSize', parseInt(e.target.value))
+                }
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-300 mb-2 block">
+                Color
+              </label>
+              <input
+                type="color"
+                value={element.color}
+                onChange={(e) => handleChange('color', e.target.value)}
+                className="w-full h-10 bg-gray-900 border border-gray-600 rounded-lg cursor-pointer"
+              />
+            </div>
           </div>
 
           <div>
-            <label
-              style={{
-                fontSize: '13px',
-                display: 'block',
-                marginBottom: '0.25rem',
-              }}
-            >
+            <label className="text-xs font-medium text-gray-300 mb-2 block">
               Font Family
             </label>
             <select
               value={element.fontFamily}
               onChange={(e) => handleChange('fontFamily', e.target.value)}
-              style={{ width: '100%', padding: '0.25rem', fontSize: '14px' }}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer"
             >
-              <option value="Arial">Arial</option>
-              <option value="Verdana">Verdana</option>
-              <option value="Georgia">Georgia</option>
-              <option value="Courier New">Courier New</option>
-              <option value="Comic Sans MS">Comic Sans MS</option>
+              {FONTS.map((font) => (
+                <option key={font} value={font}>
+                  {font}
+                </option>
+              ))}
             </select>
-          </div>
-
-          <div>
-            <label
-              style={{
-                fontSize: '13px',
-                display: 'block',
-                marginBottom: '0.25rem',
-              }}
-            >
-              Color
-            </label>
-            <input
-              type="color"
-              value={element.color}
-              onChange={(e) => handleChange('color', e.target.value)}
-              style={{ width: '100%' }}
-            />
           </div>
         </div>
       )}

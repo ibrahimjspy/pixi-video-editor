@@ -2,27 +2,33 @@
 
 import FilterPanel from './FilterPanel';
 import TextPanel from './TextPanel';
-import UploadPanel from  './UploadPanel'
-
+import UploadPanel from './UploadPanel';
 
 const Sidebar = () => {
   return (
-    <div
-      style={{
-        padding: '1rem',
-        width: '280px',
-        background: '#f8f9fa',
-        height: '100%',
-        overflowY: 'auto',
-        boxSizing: 'border-box',
-        borderRight: '1px solid #ddd',
-      }}
-    >
-      <UploadPanel />
-      <hr style={{ margin: '1rem 0' }} />
-      <FilterPanel />
-      <hr style={{ margin: '1rem 0' }} />
-      <TextPanel />
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Sidebar Header */}
+      <div className="px-4 py-3 bg-gray-900 border-b border-gray-700">
+        <h2 className="text-sm font-semibold text-gray-300">Tools & Assets</h2>
+      </div>
+
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Upload Section */}
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+          <UploadPanel />
+        </div>
+
+        {/* Filters Section */}
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+          <FilterPanel />
+        </div>
+
+        {/* Text Section */}
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+          <TextPanel />
+        </div>
+      </div>
     </div>
   );
 };

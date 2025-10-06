@@ -73,71 +73,75 @@ const VideoPreview = () => {
   };
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: '2rem',
-        height: '100%',
-        background: 'linear-gradient(135deg, #e5e7eb, #f3f4f6)',
-      }}
-    >
-      {/* Aspect Ratio Selector */}
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ marginRight: '0.5rem', fontWeight: 500 }}>
-          Aspect Ratio:
-        </label>
-        <select
-          value={aspectRatio}
-          onChange={(e) => setAspectRatio(e.target.value as AspectRatio)}
-          style={{
-            padding: '0.25rem 0.5rem',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            backgroundColor: 'black',
-            color: 'white',
-          }}
-        >
-          {Object.keys(ASPECT_RATIOS).map((ratio) => (
-            <option key={ratio} value={ratio} style={{ color: '#333' }}>
-              {ratio}
-            </option>
-          ))}
-        </select>
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="px-6 py-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
+        {/* Aspect Ratio */}
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-gray-300">Canvas:</label>
+          <select
+            value={aspectRatio}
+            onChange={(e) => setAspectRatio(e.target.value as AspectRatio)}
+            className="px-3 py-1.5 bg-gray-700 text-white rounded-lg text-sm font-medium border border-gray-600 hover:bg-gray-600 transition-colors cursor-pointer"
+          >
+            {Object.keys(ASPECT_RATIOS).map((ratio) => (
+              <option key={ratio} value={ratio}>
+                {ratio}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Stats */}
+        <div className="flex items-center gap-4 text-xs text-gray-400">
+          <span>{elements.length} elements</span>
+          <span>{width}×{height}px</span>
+        </div>
       </div>
 
-      {/* Canvas Preview */}
-      <div
-        ref={canvasRef}
-        style={{
-          width,
-          height,
-          background:
-            'repeating-conic-gradient(#d1d5db 0% 25%, #e5e7eb 0% 50%) 50% / 20px 20px',
-          borderRadius: '8px',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-          overflow: 'hidden',
-        }}
-      />
-
-      {/* Play/Pause button for video */}
-      {selectedElement?.type === 'video' && (
-        <button
-          onClick={togglePlayPause}
+      {/* Canvas Area */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div
+          ref={canvasRef}
           style={{
-            marginTop: '1rem',
-            padding: '0.5rem 1rem',
-            backgroundColor: '#3b82f6',
-            color: '#fff',
-            borderRadius: '4px',
-            border: 'none',
-            cursor: 'pointer',
+            width,
+            height,
+            background: 'repeating-conic-gradient(#2a2a2a 0% 25%, #1a1a1a 0% 50%) 50% / 20px 20px',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+            borderRadius: '12px',
+            overflow: 'hidden',
           }}
-        >
-          {isPlaying ? 'Pause' : 'Play'}
-        </button>
-      )}
+        />
+      </div>
+
+      {/* Bottom Controls */}
+      <div className="px-6 py-3 bg-gray-800 border-t border-gray-700 flex items-center justify-between">
+        <div className="text-xs text-gray-400">
+          {selectedElement ? (
+            <>
+              Selected: <span className="text-blue-400 font-semibold">{selectedElement.type}</span>
+            </>
+          ) : (
+            'No element selected'
+          )}
+        </div>
+
+        {/* Video Controls */}
+        {selectedElement?.type === 'video' && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={togglePlayPause}
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+            >
+              {isPlaying ? '⏸️ Pause' : '▶️ Play'}
+            </button>
+          </div>
+        )}
+
+        <div className="text-xs text-gray-500">
+          💡 Click elements to select • Drag to move
+        </div>
+      </div>
     </div>
   );
 };

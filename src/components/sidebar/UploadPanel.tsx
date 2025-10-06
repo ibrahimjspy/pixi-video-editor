@@ -1,11 +1,12 @@
 import { useEditorStore } from '@/store/editorStore';
 import { EditorElement } from '@/types/editor';
 import { v4 as uuidv4 } from 'uuid';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 const UploadPanel = () => {
   const addElement = useEditorStore((s) => s.addElement);
   const setSelectedElement = useEditorStore((s) => s.setSelectedElement);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -34,22 +35,38 @@ const UploadPanel = () => {
 
       addElement(newElement);
       setSelectedElement(newElement.id);
+      
+      // Reset input so same file can be uploaded again
+      e.target.value = '';
     },
     [addElement, setSelectedElement],
   );
 
   return (
     <div>
-      <label
-        style={{ fontWeight: 600, marginBottom: '0.5rem', display: 'block' , color: 'black' }}
+      <h3 className="text-sm font-semibold text-white mb-3">📤 Upload Media</h3>
+      
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        className="w-full py-8 px-4 border-2 border-dashed border-gray-600 rounded-lg bg-gray-900/50 hover:border-blue-500 hover:bg-gray-900 transition-all cursor-pointer group"
       >
-        Upload Image/Video
-      </label>
+        <div className="flex flex-col items-center gap-2">
+          <div className="text-4xl group-hover:scale-110 transition-transform">☁️</div>
+          <div className="text-sm font-medium text-gray-300 group-hover:text-blue-400">
+            Click to upload
+          </div>
+          <div className="text-xs text-gray-500">
+            Images & Videos
+          </div>
+        </div>
+      </button>
+      
       <input
+        ref={fileInputRef}
         type="file"
         accept="video/*,image/*"
         onChange={handleUpload}
-        style={{ width: '100%', padding: '0.25rem', fontSize: '14px', color: 'black' }}
+        className="hidden"
       />
     </div>
   );

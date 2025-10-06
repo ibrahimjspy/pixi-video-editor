@@ -7,13 +7,11 @@ const FilterPanel = () => {
     s.elements.find((el) => el.id === s.selectedElementId),
   );
 
-  if (!element || (element.type !== 'image' && element.type !== 'video'))
-    return null;
-
   const handleFilterChange = (
     filter: 'brightness' | 'contrast' | 'sharpness',
     value: number,
   ) => {
+    if (!element) return;
     updateElement(element.id, {
       filters: {
         ...element.filters,
@@ -22,37 +20,51 @@ const FilterPanel = () => {
     });
   };
 
+  if (!element || (element.type !== 'image' && element.type !== 'video')) {
+    return (
+      <div>
+        <h3 className="text-sm font-semibold text-white mb-3">🎨 Filters</h3>
+        <div className="text-xs text-gray-500 text-center py-4">
+          Select an image or video to apply filters
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
-      <div style={{ fontWeight: 600, marginBottom: '0.5rem', color: 'black' }}>
-        Filters
-      </div>
+      <h3 className="text-sm font-semibold text-white mb-3">🎨 Filters</h3>
 
-      {(['brightness', 'contrast'] as const).map((filter) => (
-        <div key={filter} style={{ marginBottom: '1rem', color: 'black' }}>
-          <label
-            style={{
-              fontSize: '13px',
-              display: 'block',
-              marginBottom: '0.25rem',
-              color: 'black',
-            }}
-          >
-            {filter.charAt(0).toUpperCase() + filter.slice(1)}
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="2"
-            step="0.01"
-            value={element.filters[filter]}
-            onChange={(e) =>
-              handleFilterChange(filter, parseFloat(e.target.value))
-            }
-            style={{ width: '100%' }}
-          />
-        </div>
-      ))}
+      <div className="space-y-4">
+        {(['brightness', 'contrast'] as const).map((filter) => (
+          <div key={filter}>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-gray-300">
+                {filter === 'brightness' ? '☀️ Brightness' : '🔲 Contrast'}
+              </label>
+              <span className="text-xs text-gray-500 font-mono">
+                {element.filters[filter].toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="2"
+              step="0.01"
+              value={element.filters[filter]}
+              onChange={(e) =>
+                handleFilterChange(filter, parseFloat(e.target.value))
+              }
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+              style={{
+                background: filter === 'brightness' 
+                  ? 'linear-gradient(to right, #000000, #888888, #ffffff)'
+                  : 'linear-gradient(to right, #666666, #aaaaaa)'
+              }}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

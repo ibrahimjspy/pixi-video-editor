@@ -16,7 +16,7 @@ export const applyFilters = (
     tint: tintColor,
     duration: 0.5,
     onUpdate: () => {
-      console.log('Tweening brightness:', brightness, 'Tint color:', tintColor);
+      // Apply brightness tint
     },
   });
 
