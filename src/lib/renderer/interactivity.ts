@@ -15,6 +15,7 @@ export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
 
   let debounceTimeout: NodeJS.Timeout | null = null;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const debounceUpdate = (updates: Record<string, any>) => {
     if (debounceTimeout) clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(() => {
@@ -23,13 +24,13 @@ export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
   };
 
   const resizeHandle = new PIXI.Graphics();
-  resizeHandle.beginFill(0xffffff);
-  resizeHandle.drawRect(0, 0, 10, 10);
-  resizeHandle.endFill();
-  resizeHandle.interactive = true;
+  // Invisible handle - still functional but not visible
+  resizeHandle.rect(0, 0, 20, 20);
+  resizeHandle.fill({ color: 0x000000, alpha: 0 }); // Completely transparent
+  resizeHandle.eventMode = 'static';
   resizeHandle.cursor = 'nwse-resize';
-  resizeHandle.x = sprite.width - 10;
-  resizeHandle.y = sprite.height - 10;
+  resizeHandle.x = sprite.width - 20;
+  resizeHandle.y = sprite.height - 20;
 
   resizeHandle
     .on('pointerdown', (event) => {
@@ -50,8 +51,8 @@ export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
 
         sprite.width = newWidth;
         sprite.height = newHeight;
-        resizeHandle.x = sprite.width - 10;
-        resizeHandle.y = sprite.height - 10;
+        resizeHandle.x = sprite.width - 20;
+        resizeHandle.y = sprite.height - 20;
 
         debounceUpdate({
           width: newWidth,
