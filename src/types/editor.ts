@@ -10,18 +10,54 @@ export interface BaseElement {
   height: number;
   rotation: number;
   filters: {
+    // Color Adjustments
     brightness: number;
     contrast: number;
-    sharpness: number;
     saturation: number;
     hue: number;
-    blur: number;
+    vibrance: number;
+    gamma: number;
     sepia: number;
     grayscale: number;
     invert: number;
-    vibrance: number;
-    gamma: number;
+    
+    // Blur & Sharpness
+    blur: number;
+    sharpness: number;
+    kawaseBlur: number;
+    zoomBlur: number;
+    tiltShift: number;
+    
+    // Distortion Effects
+    bulgePinch: number;
+    twist: number;
+    shockwave: number;
+    displacement: number;
+    
+    // Visual Effects
+    glow: number;
+    outline: number;
+    dropShadow: number;
+    bevel: number;
+    emboss: number;
+    pixelate: number;
+    dot: number;
+    crossHatch: number;
+    
+    // Vintage & Retro
+    crt: number;
+    oldFilm: number;
+    ascii: number;
     noise: number;
+    
+    // Advanced Effects
+    bloom: number;
+    godray: number;
+    reflection: number;
+    waterReflection: number;
+    rgbSplit: number;
+    colorReplace: number;
+    multiColorReplace: number;
   };
 }
 

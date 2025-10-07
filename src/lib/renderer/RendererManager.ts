@@ -5,6 +5,16 @@ import { renderImage } from './imageProcessor';
 import { renderVideo } from './videoProcessor';
 import { renderText } from './textProcessor';
 import { applyFilters } from './filters'; // Import the filters logic
+import { FILTER_DEFINITIONS } from './filterDefinitions';
+
+// Helper function to ensure all filters are initialized
+const ensureAllFilters = (element: EditorElement) => {
+  const completeFilters: any = {};
+  FILTER_DEFINITIONS.forEach(filter => {
+    completeFilters[filter.key] = element.filters[filter.key as keyof typeof element.filters] ?? filter.default;
+  });
+  return completeFilters;
+};
 
 export class RendererManager {
   private app: PIXI.Application;
@@ -37,20 +47,7 @@ export class RendererManager {
 
           // Apply filters using the new logic
           if (existingElement instanceof PIXI.Sprite) {
-            const filters = {
-              brightness: element.filters.brightness ?? 1,
-              contrast: element.filters.contrast ?? 1,
-              sharpness: element.filters.sharpness ?? 0,
-              saturation: element.filters.saturation ?? 1,
-              hue: element.filters.hue ?? 0,
-              blur: element.filters.blur ?? 0,
-              sepia: element.filters.sepia ?? 0,
-              grayscale: element.filters.grayscale ?? 0,
-              invert: element.filters.invert ?? 0,
-              vibrance: element.filters.vibrance ?? 0,
-              gamma: element.filters.gamma ?? 1,
-              noise: element.filters.noise ?? 0,
-            };
+            const filters = ensureAllFilters(element);
             applyFilters(existingElement, filters);
           }
 

@@ -2,6 +2,16 @@ import { useEditorStore } from '@/store/editorStore';
 import { EditorElement } from '@/types/editor';
 import { v4 as uuidv4 } from 'uuid';
 import { useCallback, useRef } from 'react';
+import { FILTER_DEFINITIONS } from '@/lib/renderer/filterDefinitions';
+
+// Helper function to create default filters
+const createDefaultFilters = () => {
+  const filters: any = {};
+  FILTER_DEFINITIONS.forEach(filter => {
+    filters[filter.key] = filter.default;
+  });
+  return filters;
+};
 
 const UploadPanel = () => {
   const addElement = useEditorStore((s) => s.addElement);
@@ -26,11 +36,7 @@ const UploadPanel = () => {
         width: 300,
         height: 200,
         rotation: 0,
-        filters: {
-          brightness: 1,
-          contrast: 1,
-          sharpness: 0,
-        },
+        filters: createDefaultFilters(),
       } as EditorElement;
 
       addElement(newElement);
