@@ -26,9 +26,7 @@ const Sidebar = () => {
         </div>
 
         {/* Resize Section - Only show when element is selected */}
-        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-          <ResizePanel />
-        </div>
+        <ResizePanel />
 
         {/* Text Section */}
         <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">

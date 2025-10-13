@@ -120,7 +120,7 @@ const ResizePanel = () => {
   const heightPercentage = Math.round((height / originalHeight) * 100);
 
   return (
-    <div className="space-y-4">
+    <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-300">Resize</h3>
