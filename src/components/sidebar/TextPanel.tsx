@@ -40,9 +40,54 @@ const TextPanel = () => {
       fontFamily: 'Arial',
       color: '#ffffff',
       filters: {
+        // Color Adjustments
         brightness: 1,
         contrast: 1,
+        saturation: 1,
+        hue: 0,
+        vibrance: 0,
+        gamma: 1,
+        sepia: 0,
+        grayscale: 0,
+        invert: 0,
+        
+        // Blur & Sharpness
+        blur: 0,
         sharpness: 0,
+        kawaseBlur: 0,
+        zoomBlur: 0,
+        tiltShift: 0,
+        
+        // Distortion Effects
+        bulgePinch: 0,
+        twist: 0,
+        shockwave: 0,
+        displacement: 0,
+        
+        // Visual Effects
+        glow: 0,
+        outline: 0,
+        dropShadow: 0,
+        bevel: 0,
+        emboss: 0,
+        pixelate: 0,
+        dot: 0,
+        crossHatch: 0,
+        
+        // Vintage & Retro
+        crt: 0,
+        oldFilm: 0,
+        ascii: 0,
+        noise: 0,
+        
+        // Advanced Effects
+        bloom: 0,
+        godray: 0,
+        reflection: 0,
+        waterReflection: 0,
+        rgbSplit: 0,
+        colorReplace: 0,
+        multiColorReplace: 0,
       },
     };
 

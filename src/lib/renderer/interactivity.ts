@@ -1,7 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { useEditorStore } from '@/store/editorStore';
 
-export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
+export const makeInteractive = (sprite: PIXI.Sprite | PIXI.Text, elementId: string) => {
   const updateElement = useEditorStore.getState().updateElement;
 
   sprite.interactive = true;
@@ -20,17 +20,25 @@ export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
     if (debounceTimeout) clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(() => {
       updateElement(elementId, updates);
-    }, 100); // Adjust debounce delay as needed
+    }, 16); // ~60fps for smooth updates
   };
 
   const resizeHandle = new PIXI.Graphics();
-  // Invisible handle - still functional but not visible
+  // Create a more visible resize handle like CapCut
   resizeHandle.rect(0, 0, 20, 20);
-  resizeHandle.fill({ color: 0x000000, alpha: 0 }); // Completely transparent
+  resizeHandle.fill({ color: 0x3b82f6, alpha: 0 }); // Initially transparent
+  resizeHandle.stroke({ color: 0xffffff, width: 2 }); // White border
   resizeHandle.eventMode = 'static';
   resizeHandle.cursor = 'nwse-resize';
-  resizeHandle.x = sprite.width - 20;
-  resizeHandle.y = sprite.height - 20;
+  resizeHandle.name = 'resizeHandle'; // Add name for tracking
+  resizeHandle.alpha = 0; // Start invisible
+  
+  // Position in bottom-right corner (relative to sprite bounds)
+  // Make sure the handle is positioned correctly relative to sprite dimensions
+  const handleX = Math.max(0, sprite.width - 20);
+  const handleY = Math.max(0, sprite.height - 20);
+  resizeHandle.x = handleX;
+  resizeHandle.y = handleY;
 
   resizeHandle
     .on('pointerdown', (event) => {
@@ -46,24 +54,66 @@ export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
         const { x, y } = event.data.global;
         const deltaX = x - startX;
         const deltaY = y - startY;
-        const newWidth = Math.max(50, startWidth + deltaX);
-        const newHeight = Math.max(50, startHeight + deltaY);
+        
+        // Calculate new dimensions with minimum constraints
+        const newWidth = Math.max(20, startWidth + deltaX);
+        const newHeight = Math.max(20, startHeight + deltaY);
 
+        // Update sprite dimensions immediately for smooth visual feedback
         sprite.width = newWidth;
         sprite.height = newHeight;
-        resizeHandle.x = sprite.width - 20;
-        resizeHandle.y = sprite.height - 20;
+        
+        // Update resize handle position to stay in bottom-right corner
+        const newHandleX = Math.max(0, newWidth - 20);
+        const newHandleY = Math.max(0, newHeight - 20);
+        resizeHandle.x = newHandleX;
+        resizeHandle.y = newHandleY;
 
-        debounceUpdate({
+        // For text elements, update word wrap width
+        if (sprite instanceof PIXI.Text) {
+          sprite.style.wordWrapWidth = newWidth;
+        }
+
+        // Update store immediately for canvas editing (no debounce)
+        updateElement(elementId, {
           width: newWidth,
           height: newHeight,
         });
       }
     })
-    .on('pointerup', () => (isResizing = false))
-    .on('pointerupoutside', () => (isResizing = false));
+    .on('pointerup', () => {
+      isResizing = false;
+      resizeHandle.alpha = 0; // Hide after resize
+    })
+    .on('pointerupoutside', () => {
+      isResizing = false;
+      resizeHandle.alpha = 0; // Hide after resize
+    });
 
   sprite.addChild(resizeHandle);
+
+  // Show resize handle on hover with smooth transition
+  sprite.on('pointerover', () => {
+    resizeHandle.alpha = 1.0; // Fully visible on hover
+  });
+
+  // Hide resize handle when not hovering
+  sprite.on('pointerout', () => {
+    if (!isResizing) {
+      resizeHandle.alpha = 0;
+    }
+  });
+
+  // Keep handle visible while resizing
+  resizeHandle.on('pointerover', () => {
+    resizeHandle.alpha = 1.0;
+  });
+
+  resizeHandle.on('pointerout', () => {
+    if (!isResizing) {
+      resizeHandle.alpha = 0;
+    }
+  });
 
   sprite
     .on('pointerdown', (event) => {
@@ -82,7 +132,8 @@ export const makeInteractive = (sprite: PIXI.Sprite, elementId: string) => {
         sprite.x = newX;
         sprite.y = newY;
 
-        debounceUpdate({
+        // Update store immediately for canvas editing (no debounce)
+        updateElement(elementId, {
           x: newX,
           y: newY,
         });

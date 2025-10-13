@@ -22,8 +22,8 @@ export const renderVideo = (
     const texture = PIXI.Texture.from(video);
     const sprite = new PIXI.Sprite(texture);
 
-    sprite.width = app.screen.width;
-    sprite.height = app.screen.height;
+    sprite.width = element.width;
+    sprite.height = element.height;
     sprite.x = element.x;
     sprite.y = element.y;
 

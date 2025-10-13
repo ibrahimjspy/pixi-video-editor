@@ -43,12 +43,21 @@ export class RendererManager {
         if (existingElement) {
           existingElement.x = element.x;
           existingElement.y = element.y;
+          existingElement.width = element.width;
+          existingElement.height = element.height;
           existingElement.rotation = element.rotation || 0;
 
           // Apply filters using the new logic
           if (existingElement instanceof PIXI.Sprite) {
             const filters = ensureAllFilters(element);
             applyFilters(existingElement, filters);
+          }
+
+          // Update resize handle position if it exists
+          const resizeHandle = existingElement.children.find((child: any) => child.name === 'resizeHandle');
+          if (resizeHandle) {
+            resizeHandle.x = Math.max(0, element.width - 20);
+            resizeHandle.y = Math.max(0, element.height - 20);
           }
 
           if (element.type === 'text' && existingElement instanceof PIXI.Text) {
@@ -61,6 +70,9 @@ export class RendererManager {
               wordWrap: true,
               wordWrapWidth: element.width || this.app.screen.width,
             });
+            // Update text dimensions
+            existingElement.width = element.width;
+            existingElement.height = element.height;
           }
         }
       } else {

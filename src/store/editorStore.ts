@@ -16,7 +16,15 @@ export const useEditorStore = create<EditorState>((set) => ({
   elements: [],
   selectedElementId: null,
   addElement: (element) =>
-    set((state) => ({ elements: [...state.elements, element] })),
+    set((state) => {
+      // Store original dimensions if not already set
+      const elementWithOriginal = {
+        ...element,
+        originalWidth: element.originalWidth || element.width,
+        originalHeight: element.originalHeight || element.height,
+      };
+      return { elements: [...state.elements, elementWithOriginal] };
+    }),
   updateElement: (id, updates) =>
     set((state: any) => ({
       elements: state.elements.map((el: any) =>

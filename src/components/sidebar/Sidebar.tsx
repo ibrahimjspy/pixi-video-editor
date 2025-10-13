@@ -3,6 +3,7 @@
 import FilterPanel from './FilterPanel';
 import TextPanel from './TextPanel';
 import UploadPanel from './UploadPanel';
+import ResizePanel from './ResizePanel';
 
 const Sidebar = () => {
   return (
@@ -22,6 +23,11 @@ const Sidebar = () => {
         {/* Filters Section */}
         <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
           <FilterPanel />
+        </div>
+
+        {/* Resize Section - Only show when element is selected */}
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+          <ResizePanel />
         </div>
 
         {/* Text Section */}

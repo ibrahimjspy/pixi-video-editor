@@ -9,6 +9,8 @@ export interface BaseElement {
   width: number;
   height: number;
   rotation: number;
+  originalWidth?: number;
+  originalHeight?: number;
   filters: {
     // Color Adjustments
     brightness: number;
