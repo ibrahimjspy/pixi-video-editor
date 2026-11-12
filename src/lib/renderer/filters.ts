@@ -1,422 +1,607 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as PIXI from 'pixi.js';
 import {
-  GlowFilter,
-  OutlineFilter,
-  DropShadowFilter,
+  AdjustmentFilter,
+  AdvancedBloomFilter,
+  AsciiFilter,
   BevelFilter,
-  EmbossFilter,
-  PixelateFilter,
-  DotFilter,
+  BulgePinchFilter,
+  ColorReplaceFilter,
+  ConvolutionFilter,
   CrossHatchFilter,
   CRTFilter,
-  OldFilmFilter,
-  AsciiFilter,
-  AdvancedBloomFilter,
+  DotFilter,
+  DropShadowFilter,
+  EmbossFilter,
+  GlowFilter,
   GodrayFilter,
+  KawaseBlurFilter,
+  MultiColorReplaceFilter,
+  OldFilmFilter,
+  OutlineFilter,
+  PixelateFilter,
   ReflectionFilter,
   RGBSplitFilter,
-  ColorReplaceFilter,
-  MultiColorReplaceFilter,
-  KawaseBlurFilter,
-  ZoomBlurFilter,
-  TiltShiftFilter,
-  BulgePinchFilter,
-  TwistFilter,
   ShockwaveFilter,
-  SimplexNoiseFilter
+  TiltShiftFilter,
+  TwistFilter,
+  ZoomBlurFilter,
 } from 'pixi-filters';
 
-const { ColorMatrixFilter, BlurFilter, DisplacementFilter } = PIXI;
+import { buildColorMatrix } from '@/lib/renderer/filterColorMatrix';
+import { FILTER_DEFINITIONS } from '@/lib/renderer/filterDefinitions';
+import type { FilterSettings } from '@/types/editor';
 
-export const applyFilters = (
-  sprite: PIXI.Sprite,
-  filters: {
-    // Color Adjustments
-    brightness: number;
-    contrast: number;
-    saturation: number;
-    hue: number;
-    vibrance: number;
-    gamma: number;
-    sepia: number;
-    grayscale: number;
-    invert: number;
-    
-    // Blur & Sharpness
-    blur: number;
-    sharpness: number;
-    kawaseBlur: number;
-    zoomBlur: number;
-    tiltShift: number;
-    
-    // Distortion Effects
-    bulgePinch: number;
-    twist: number;
-    shockwave: number;
-    displacement: number;
-    
-    // Visual Effects
-    glow: number;
-    outline: number;
-    dropShadow: number;
-    bevel: number;
-    emboss: number;
-    pixelate: number;
-    dot: number;
-    crossHatch: number;
-    
-    // Vintage & Retro
-    crt: number;
-    oldFilm: number;
-    ascii: number;
-    noise: number;
-    
-    // Advanced Effects
-    bloom: number;
-    godray: number;
-    reflection: number;
-    waterReflection: number;
-    rgbSplit: number;
-    colorReplace: number;
-    multiColorReplace: number;
-  },
-) => {
-  const appliedFilters: PIXI.Filter[] = [];
+type FilterKey = keyof FilterSettings;
 
-  // Create color matrix filter for all color effects
-  const colorMatrixFilter = new ColorMatrixFilter();
-  colorMatrixFilter.reset();
+/** Global-space bounds of the filtered object, read at apply time. */
+interface Geometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
-  // Apply brightness using ColorMatrixFilter (more reliable than tint)
-  if (filters.brightness !== 1) {
-    const brightnessValue = Math.max(0, Math.min(filters.brightness, 2));
-    colorMatrixFilter.brightness(brightnessValue, false);
+/** Re-positions a size/position dependent filter (centre, radius, texel size...) for new bounds. */
+type GeometrySync = (geometry: Geometry) => void;
+
+interface CacheEntry {
+  key: string;
+  filters: PIXI.Filter[];
+  geometrySyncs: GeometrySync[];
+  geometryKey: string;
+}
+
+interface FilterSpec {
+  key: FilterKey;
+  min: number;
+  max: number;
+  default: number;
+}
+
+const FILTER_SPECS: FilterSpec[] = FILTER_DEFINITIONS.map((definition) => ({
+  key: definition.key as FilterKey,
+  min: definition.min,
+  max: definition.max,
+  default: definition.default,
+}));
+
+const SPEC_BY_KEY = new Map<FilterKey, FilterSpec>(FILTER_SPECS.map((spec) => [spec.key, spec]));
+
+const filterCache = new WeakMap<PIXI.Container, CacheEntry>();
+
+/** Value for a key: falls back to the definition default when missing/NaN and clamps to [min, max]. */
+const readValue = (filters: FilterSettings, key: FilterKey): number => {
+  const spec = SPEC_BY_KEY.get(key);
+  const raw = filters?.[key];
+  const fallback = spec ? spec.default : 0;
+  const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
+
+  return spec ? Math.max(spec.min, Math.min(spec.max, value)) : value;
+};
+
+/** Cheap cache key: every value in definition order. */
+const settingsKey = (filters: FilterSettings): string =>
+  FILTER_SPECS.map((spec) => readValue(filters, spec.key)).join('|');
+
+/** True when every setting is at its definition default, i.e. no filter would be attached. */
+export const isDefaultFilters = (filters: FilterSettings | null | undefined): boolean => {
+  if (!filters) {
+    return true;
   }
 
-  // Apply contrast (clamp to safe range)
-  if (filters.contrast !== 1) {
-    const contrastValue = Math.max(0, Math.min(filters.contrast, 2));
-    colorMatrixFilter.contrast(contrastValue, false);
+  return FILTER_SPECS.every((spec) => readValue(filters, spec.key) === spec.default);
+};
+
+const FALLBACK_SIZE = 200;
+
+const readGeometry = (target: PIXI.Container): Geometry => {
+  const bounds = target.getBounds();
+  const width = Number.isFinite(bounds.width) && bounds.width > 0 ? bounds.width : FALLBACK_SIZE;
+  const height = Number.isFinite(bounds.height) && bounds.height > 0 ? bounds.height : FALLBACK_SIZE;
+
+  return {
+    x: Number.isFinite(bounds.x) ? bounds.x : 0,
+    y: Number.isFinite(bounds.y) ? bounds.y : 0,
+    width,
+    height,
+  };
+};
+
+const geometryKeyOf = (geometry: Geometry): string =>
+  `${geometry.x}|${geometry.y}|${geometry.width}|${geometry.height}`;
+
+// ---------------------------------------------------------------------------------------------
+// Displacement map: generated once, shared by every DisplacementFilter (never destroyed).
+// ---------------------------------------------------------------------------------------------
+
+const DISPLACEMENT_MAP_SIZE = 256;
+const DISPLACEMENT_GRID = 8;
+
+let displacementSprite: PIXI.Sprite | null = null;
+
+/** Small deterministic PRNG so the map (and therefore exports) look the same on every load. */
+const createRandom = (seed: number) => {
+  let state = seed >>> 0;
+
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+/** Tileable smooth value noise in 0..1 sampled at pixel (x, y). */
+const sampleValueNoise = (grid: number[], x: number, y: number): number => {
+  const cell = DISPLACEMENT_MAP_SIZE / DISPLACEMENT_GRID;
+  const gx = x / cell;
+  const gy = y / cell;
+  const x0 = Math.floor(gx) % DISPLACEMENT_GRID;
+  const y0 = Math.floor(gy) % DISPLACEMENT_GRID;
+  const x1 = (x0 + 1) % DISPLACEMENT_GRID;
+  const y1 = (y0 + 1) % DISPLACEMENT_GRID;
+  const fx = gx - Math.floor(gx);
+  const fy = gy - Math.floor(gy);
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const top = grid[y0 * DISPLACEMENT_GRID + x0] * (1 - sx) + grid[y0 * DISPLACEMENT_GRID + x1] * sx;
+  const bottom = grid[y1 * DISPLACEMENT_GRID + x0] * (1 - sx) + grid[y1 * DISPLACEMENT_GRID + x1] * sx;
+
+  return top * (1 - sy) + bottom * sy;
+};
+
+/**
+ * Lazily builds the shared displacement map: a tileable smooth-noise texture whose red channel drives
+ * the X offset and green channel the Y offset. Returns null outside the browser (SSR).
+ */
+const getDisplacementSprite = (): PIXI.Sprite | null => {
+  if (displacementSprite) {
+    return displacementSprite;
   }
 
-  // Apply saturation (clamp to safe range)
-  if (filters.saturation !== 1) {
-    const saturationValue = Math.max(0, Math.min(filters.saturation, 2));
-    colorMatrixFilter.saturate(saturationValue, false);
+  if (typeof document === 'undefined') {
+    return null;
   }
 
-  // Apply hue rotation (clamp to safe range)
-  if (filters.hue !== 0) {
-    const hueValue = Math.max(-180, Math.min(filters.hue, 180));
-    colorMatrixFilter.hue(hueValue, false);
+  const canvas = document.createElement('canvas');
+  canvas.width = DISPLACEMENT_MAP_SIZE;
+  canvas.height = DISPLACEMENT_MAP_SIZE;
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    return null;
   }
 
-  // Apply sepia (clamp to safe range)
-  if (filters.sepia > 0) {
-    colorMatrixFilter.sepia(false);
+  const random = createRandom(1337);
+  const cells = DISPLACEMENT_GRID * DISPLACEMENT_GRID;
+  const gridX = Array.from({ length: cells }, () => random());
+  const gridY = Array.from({ length: cells }, () => random());
+  const image = context.createImageData(DISPLACEMENT_MAP_SIZE, DISPLACEMENT_MAP_SIZE);
+
+  for (let y = 0; y < DISPLACEMENT_MAP_SIZE; y += 1) {
+    for (let x = 0; x < DISPLACEMENT_MAP_SIZE; x += 1) {
+      const index = (y * DISPLACEMENT_MAP_SIZE + x) * 4;
+      image.data[index] = Math.round(sampleValueNoise(gridX, x, y) * 255);
+      image.data[index + 1] = Math.round(sampleValueNoise(gridY, x, y) * 255);
+      image.data[index + 2] = 128;
+      image.data[index + 3] = 255;
+    }
   }
 
-  // Apply grayscale (clamp to safe range)
-  if (filters.grayscale > 0) {
-    const grayscaleValue = Math.max(0, Math.min(filters.grayscale, 1));
-    colorMatrixFilter.greyscale(grayscaleValue, false);
+  context.putImageData(image, 0, 0);
+
+  const texture = PIXI.Texture.from(canvas);
+  texture.source.addressMode = 'repeat';
+  displacementSprite = new PIXI.Sprite(texture);
+
+  return displacementSprite;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Filter construction
+// ---------------------------------------------------------------------------------------------
+
+/** 3x3 kernel: amount > 0 sharpens (unsharp-style), amount < 0 softens towards a box blur. */
+const sharpnessKernel = (amount: number): Float32Array => {
+  if (amount >= 0) {
+    const a = amount * 1.5;
+
+    return new Float32Array([0, -a, 0, -a, 1 + 4 * a, -a, 0, -a, 0]);
   }
 
-  // Apply invert (clamp to safe range)
-  if (filters.invert > 0) {
-    colorMatrixFilter.negative(false);
+  const t = -amount;
+  const side = t / 9;
+
+  return new Float32Array([side, side, side, side, 1 - t + side, side, side, side, side]);
+};
+
+const buildFilters = (
+  settings: FilterSettings,
+): { filters: PIXI.Filter[]; geometrySyncs: GeometrySync[] } => {
+  const filters: PIXI.Filter[] = [];
+  const geometrySyncs: GeometrySync[] = [];
+  const value = (key: FilterKey) => readValue(settings, key);
+
+  // --- Colour: brightness/contrast/saturation/vibrance/hue/grayscale/sepia/invert fold into ONE matrix.
+  const colorMatrix = buildColorMatrix({
+    brightness: value('brightness'),
+    contrast: value('contrast'),
+    saturation: value('saturation'),
+    vibrance: value('vibrance'),
+    hue: value('hue'),
+    grayscale: value('grayscale'),
+    sepia: value('sepia'),
+    invert: value('invert'),
+  });
+
+  if (colorMatrix) {
+    const colorMatrixFilter = new PIXI.ColorMatrixFilter();
+    colorMatrixFilter.matrix = colorMatrix;
+    filters.push(colorMatrixFilter);
   }
 
-  // Apply vibrance (enhanced saturation for mid-tones) - using custom matrix
-  if (filters.vibrance !== 0) {
-    const vibranceValue = Math.max(-1, Math.min(filters.vibrance, 1));
-    // Custom vibrance matrix approximation
-    const matrix = [
-      1 + vibranceValue * 0.3, 0, 0, 0, 0,
-      0, 1 + vibranceValue * 0.3, 0, 0, 0,
-      0, 0, 1 + vibranceValue * 0.3, 0, 0,
-      0, 0, 0, 1, 0,
-    ];
-    colorMatrixFilter.matrix = matrix as any;
+  // Gamma is non-linear so it cannot live in the matrix; it runs as its own pass right after it.
+  const gamma = value('gamma');
+  if (gamma !== 1) {
+    filters.push(new AdjustmentFilter({ gamma }));
   }
 
-  // Apply gamma correction (clamp to safe range) - using custom matrix
-  if (filters.gamma !== 1) {
-    const gammaValue = Math.max(0.5, Math.min(filters.gamma, 2));
-    // Custom gamma matrix approximation
-    const matrix = [
-      Math.pow(gammaValue, 0.5), 0, 0, 0, 0,
-      0, Math.pow(gammaValue, 0.5), 0, 0, 0,
-      0, 0, Math.pow(gammaValue, 0.5), 0, 0,
-      0, 0, 0, 1, 0,
-    ];
-    colorMatrixFilter.matrix = matrix as any;
+  // --- Blur & sharpness
+  const sharpness = value('sharpness');
+  if (sharpness !== 0) {
+    const convolution = new ConvolutionFilter({ matrix: sharpnessKernel(sharpness) });
+    filters.push(convolution);
+    // ConvolutionFilter samples neighbours at 1/width, 1/height: keep that at one pixel of the target.
+    geometrySyncs.push(({ width, height }) => {
+      convolution.width = width;
+      convolution.height = height;
+    });
   }
 
-  // Apply noise (using a custom matrix) - clamp to safe range
-  if (filters.noise > 0) {
-    const noiseValue = Math.max(0, Math.min(filters.noise, 1));
-    const noiseAmount = noiseValue * 0.1;
-    const matrix = [
-      1, 0, 0, 0, noiseAmount * (Math.random() - 0.5),
-      0, 1, 0, 0, noiseAmount * (Math.random() - 0.5),
-      0, 0, 1, 0, noiseAmount * (Math.random() - 0.5),
-      0, 0, 0, 1, 0,
-    ];
-    colorMatrixFilter.matrix = matrix as any;
+  const blur = value('blur');
+  if (blur > 0) {
+    filters.push(new PIXI.BlurFilter({ strength: blur * 10 }));
   }
 
-  // Apply sharpness (using unsharp mask approximation) - clamp to safe range
-  if (filters.sharpness !== 0) {
-    const sharpnessValue = Math.max(-1, Math.min(filters.sharpness, 1));
-    const sharpnessAmount = sharpnessValue * 0.5;
-    const matrix = [
-      -sharpnessAmount, -sharpnessAmount, -sharpnessAmount, 0, 0,
-      -sharpnessAmount, 1 + 8 * sharpnessAmount, -sharpnessAmount, 0, 0,
-      -sharpnessAmount, -sharpnessAmount, -sharpnessAmount, 0, 0,
-      0, 0, 0, 1, 0,
-    ];
-    colorMatrixFilter.matrix = matrix as any;
+  const kawaseBlur = value('kawaseBlur');
+  if (kawaseBlur > 0) {
+    filters.push(new KawaseBlurFilter({ strength: kawaseBlur * 5 }));
   }
 
-  appliedFilters.push(colorMatrixFilter);
-
-  // Apply blur filter - clamp to safe range
-  if (filters.blur > 0) {
-    const blurValue = Math.max(0, Math.min(filters.blur, 1));
-    const blurFilter = new BlurFilter();
-    blurFilter.blur = blurValue * 10; // Scale blur amount
-    appliedFilters.push(blurFilter);
+  const zoomBlur = value('zoomBlur');
+  if (zoomBlur > 0) {
+    const zoom = new ZoomBlurFilter({ strength: zoomBlur * 0.3 });
+    filters.push(zoom);
+    // Centre is in pixels of the filtered area.
+    geometrySyncs.push(({ width, height }) => {
+      zoom.center = { x: width / 2, y: height / 2 };
+    });
   }
 
-  // Apply Kawase Blur
-  if (filters.kawaseBlur > 0) {
-    const kawaseValue = Math.max(0, Math.min(filters.kawaseBlur, 1));
-    const kawaseFilter = new KawaseBlurFilter(kawaseValue * 5);
-    appliedFilters.push(kawaseFilter);
+  const tiltShift = value('tiltShift');
+  if (tiltShift > 0) {
+    const tilt = new TiltShiftFilter({ blur: tiltShift * 20 });
+    filters.push(tilt);
+    // Horizontal in-focus band through the middle; blur ramps up over half the height.
+    geometrySyncs.push(({ width, height }) => {
+      tilt.start = { x: 0, y: height / 2 };
+      tilt.end = { x: width, y: height / 2 };
+      tilt.gradientBlur = Math.max(1, height / 2);
+      tilt.updateDelta();
+    });
   }
 
-  // Apply Zoom Blur
-  if (filters.zoomBlur > 0) {
-    const zoomValue = Math.max(0, Math.min(filters.zoomBlur, 1));
-    const zoomFilter = new ZoomBlurFilter();
-    zoomFilter.strength = zoomValue * 0.1;
-    appliedFilters.push(zoomFilter);
+  // --- Distortion
+  const bulgePinch = value('bulgePinch');
+  if (bulgePinch !== 0) {
+    // BulgePinchFilter's centre is already normalised (0.5, 0.5 = middle); only the radius is in pixels.
+    const bulge = new BulgePinchFilter({ center: { x: 0.5, y: 0.5 }, strength: bulgePinch });
+    filters.push(bulge);
+    geometrySyncs.push(({ width, height }) => {
+      bulge.radius = Math.min(width, height) / 2;
+    });
   }
 
-  // Apply Tilt Shift
-  if (filters.tiltShift > 0) {
-    const tiltValue = Math.max(0, Math.min(filters.tiltShift, 1));
-    const tiltFilter = new TiltShiftFilter();
-    tiltFilter.blur = tiltValue * 20;
-    appliedFilters.push(tiltFilter);
+  const twist = value('twist');
+  if (twist !== 0) {
+    const twistFilter = new TwistFilter({ angle: twist * 10 });
+    filters.push(twistFilter);
+    // TwistFilter's offset is in global (screen) pixels, so it follows the target's bounds centre.
+    geometrySyncs.push(({ x, y, width, height }) => {
+      twistFilter.offset = { x: x + width / 2, y: y + height / 2 };
+      twistFilter.radius = Math.min(width, height) / 2;
+    });
   }
 
-  // Apply Bulge/Pinch
-  if (filters.bulgePinch !== 0) {
-    const bulgeValue = Math.max(-1, Math.min(filters.bulgePinch, 1));
-    const bulgeFilter = new BulgePinchFilter();
-    bulgeFilter.radius = 200;
-    bulgeFilter.strength = bulgeValue;
-    appliedFilters.push(bulgeFilter);
+  const shockwave = value('shockwave');
+  if (shockwave > 0) {
+    const shock = new ShockwaveFilter({
+      amplitude: shockwave * 30,
+      brightness: 1 + shockwave * 0.2,
+      radius: -1,
+    });
+    filters.push(shock);
+    // Static ring (no ticker drives `time`): frozen halfway between the centre and the nearest edge.
+    geometrySyncs.push(({ width, height }) => {
+      const size = Math.min(width, height);
+      shock.center = { x: width / 2, y: height / 2 };
+      shock.wavelength = Math.max(20, size * 0.4);
+      shock.time = (size * 0.25) / shock.speed;
+    });
   }
 
-  // Apply Twist
-  if (filters.twist !== 0) {
-    const twistValue = Math.max(-1, Math.min(filters.twist, 1));
-    const twistFilter = new TwistFilter();
-    twistFilter.radius = 200;
-    twistFilter.angle = twistValue * 10;
-    appliedFilters.push(twistFilter);
+  const displacement = value('displacement');
+  if (displacement > 0) {
+    const mapSprite = getDisplacementSprite();
+
+    if (mapSprite) {
+      filters.push(new PIXI.DisplacementFilter({ sprite: mapSprite, scale: displacement * 40 }));
+    }
   }
 
-  // Apply Shockwave
-  if (filters.shockwave > 0) {
-    const shockValue = Math.max(0, Math.min(filters.shockwave, 1));
-    const shockFilter = new ShockwaveFilter();
-    shockFilter.amplitude = shockValue * 30;
-    shockFilter.wavelength = 30;
-    shockFilter.brightness = shockValue;
-    appliedFilters.push(shockFilter);
+  // --- Visual effects
+  const glow = value('glow');
+  if (glow > 0) {
+    filters.push(new GlowFilter({ distance: 15, outerStrength: glow * 4, innerStrength: glow * 2 }));
   }
 
-  // Apply Displacement
-  if (filters.displacement > 0) {
-    const dispValue = Math.max(0, Math.min(filters.displacement, 1));
-    // Create a simple texture for displacement
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    const texture = PIXI.Texture.from(canvas);
-    const dispSprite = new PIXI.Sprite(texture);
-    const dispFilter = new DisplacementFilter(dispSprite, dispValue * 20);
-    appliedFilters.push(dispFilter);
+  const outline = value('outline');
+  if (outline > 0) {
+    filters.push(new OutlineFilter({ thickness: outline * 4 }));
   }
 
-  // Apply Glow
-  if (filters.glow > 0) {
-    const glowValue = Math.max(0, Math.min(filters.glow, 1));
-    const glowFilter = new GlowFilter();
-    glowFilter.distance = 15;
-    glowFilter.outerStrength = glowValue * 4;
-    glowFilter.innerStrength = glowValue * 2;
-    appliedFilters.push(glowFilter);
+  const dropShadow = value('dropShadow');
+  if (dropShadow > 0) {
+    filters.push(new DropShadowFilter({ blur: dropShadow * 5, alpha: dropShadow }));
   }
 
-  // Apply Outline
-  if (filters.outline > 0) {
-    const outlineValue = Math.max(0, Math.min(filters.outline, 1));
-    const outlineFilter = new OutlineFilter();
-    outlineFilter.thickness = outlineValue * 4;
-    appliedFilters.push(outlineFilter);
+  const bevel = value('bevel');
+  if (bevel > 0) {
+    filters.push(new BevelFilter({ thickness: bevel * 3 }));
   }
 
-  // Apply Drop Shadow
-  if (filters.dropShadow > 0) {
-    const shadowValue = Math.max(0, Math.min(filters.dropShadow, 1));
-    const shadowFilter = new DropShadowFilter();
-    shadowFilter.blur = shadowValue * 5;
-    shadowFilter.alpha = shadowValue;
-    appliedFilters.push(shadowFilter);
+  const emboss = value('emboss');
+  if (emboss > 0) {
+    filters.push(new EmbossFilter(emboss * 2));
   }
 
-  // Apply Bevel
-  if (filters.bevel > 0) {
-    const bevelValue = Math.max(0, Math.min(filters.bevel, 1));
-    const bevelFilter = new BevelFilter();
-    bevelFilter.thickness = bevelValue * 3;
-    appliedFilters.push(bevelFilter);
+  const pixelate = value('pixelate');
+  if (pixelate > 0) {
+    filters.push(new PixelateFilter(Math.max(1, pixelate * 20)));
   }
 
-  // Apply Emboss
-  if (filters.emboss > 0) {
-    const embossValue = Math.max(0, Math.min(filters.emboss, 1));
-    const embossFilter = new EmbossFilter();
-    embossFilter.strength = embossValue * 2;
-    appliedFilters.push(embossFilter);
+  const dot = value('dot');
+  if (dot > 0) {
+    // DotFilter always produces a full black & white halftone; the slider sets the dot size
+    // (higher DotFilter scale = finer dots, so the mapping is inverted).
+    filters.push(new DotFilter({ scale: 1.5 - dot }));
   }
 
-  // Apply Pixelate
-  if (filters.pixelate > 0) {
-    const pixelValue = Math.max(0, Math.min(filters.pixelate, 1));
-    const pixelFilter = new PixelateFilter();
-    pixelFilter.size = Math.max(1, pixelValue * 20);
-    appliedFilters.push(pixelFilter);
+  if (value('crossHatch') > 0) {
+    // ON/OFF: pixi-filters' CrossHatchFilter has no uniforms at all (fixed 10px hatch, fixed thresholds),
+    // so there is nothing a scalar could drive. Any value > 0 enables it.
+    filters.push(new CrossHatchFilter());
   }
 
-  // Apply Dot
-  if (filters.dot > 0) {
-    const dotValue = Math.max(0, Math.min(filters.dot, 1));
-    const dotFilter = new DotFilter();
-    dotFilter.scale = dotValue * 0.5;
-    appliedFilters.push(dotFilter);
+  // --- Vintage & retro
+  const crt = value('crt');
+  if (crt > 0) {
+    filters.push(
+      new CRTFilter({
+        curvature: crt * 2,
+        lineWidth: crt * 2,
+        lineContrast: crt * 0.3,
+        vignettingAlpha: crt,
+      }),
+    );
   }
 
-  // Apply Cross Hatch
-  if (filters.crossHatch > 0) {
-    const hatchFilter = new CrossHatchFilter();
-    // CrossHatchFilter doesn't have a blend property, using default settings
-    appliedFilters.push(hatchFilter);
+  const oldFilm = value('oldFilm');
+  if (oldFilm > 0) {
+    filters.push(
+      new OldFilmFilter({
+        sepia: oldFilm * 0.3,
+        noise: oldFilm * 0.3,
+        noiseSize: 1,
+        scratch: oldFilm * 0.5,
+        scratchDensity: oldFilm * 0.3,
+        scratchWidth: Math.max(1, oldFilm * 2),
+        vignettingAlpha: oldFilm,
+      }),
+    );
   }
 
-  // Apply CRT
-  if (filters.crt > 0) {
-    const crtValue = Math.max(0, Math.min(filters.crt, 1));
-    const crtFilter = new CRTFilter();
-    crtFilter.curvature = crtValue * 2;
-    crtFilter.lineWidth = crtValue * 2;
-    crtFilter.lineContrast = crtValue * 0.3;
-    appliedFilters.push(crtFilter);
+  const ascii = value('ascii');
+  if (ascii > 0) {
+    filters.push(new AsciiFilter({ size: Math.max(2, ascii * 8) }));
   }
 
-  // Apply Old Film
-  if (filters.oldFilm > 0) {
-    const filmValue = Math.max(0, Math.min(filters.oldFilm, 1));
-    const filmFilter = new OldFilmFilter();
-    filmFilter.sepia = filmValue * 0.3;
-    filmFilter.noise = filmValue * 0.3;
-    filmFilter.noiseSize = 1;
-    filmFilter.scratch = filmValue * 0.5;
-    filmFilter.scratchDensity = filmValue * 0.3;
-    filmFilter.scratchWidth = filmValue * 0.1;
-    appliedFilters.push(filmFilter);
+  const noise = value('noise');
+  if (noise > 0) {
+    // Static grain: the seed is fixed so the pattern does not flicker between rebuilds/exports.
+    filters.push(new PIXI.NoiseFilter({ noise: noise * 0.6, seed: 0.5 }));
   }
 
-  // Apply ASCII
-  if (filters.ascii > 0) {
-    const asciiValue = Math.max(0, Math.min(filters.ascii, 1));
-    const asciiFilter = new AsciiFilter();
-    asciiFilter.size = Math.max(2, asciiValue * 8);
-    appliedFilters.push(asciiFilter);
+  // --- Advanced
+  const bloom = value('bloom');
+  if (bloom > 0) {
+    // `brightness` multiplies the ORIGINAL image, so it must stay at 1; only the bloom layer scales.
+    filters.push(new AdvancedBloomFilter({ threshold: 0.5, bloomScale: bloom * 1.5, brightness: 1 }));
   }
 
-  // Apply Noise (community version)
-  if (filters.noise > 0) {
-    const noiseFilter = new SimplexNoiseFilter();
-    // SimplexNoiseFilter doesn't have a noise property, using default settings
-    appliedFilters.push(noiseFilter);
+  const godray = value('godray');
+  if (godray > 0) {
+    filters.push(
+      new GodrayFilter({ angle: 30, gain: godray * 0.5, lacunarity: 2, alpha: godray, time: 0 }),
+    );
   }
 
-  // Apply Bloom
-  if (filters.bloom > 0) {
-    const bloomValue = Math.max(0, Math.min(filters.bloom, 1));
-    const bloomFilter = new AdvancedBloomFilter();
-    bloomFilter.threshold = 0.5;
-    bloomFilter.bloomScale = bloomValue;
-    bloomFilter.brightness = bloomValue;
-    appliedFilters.push(bloomFilter);
+  const reflection = value('reflection');
+  if (reflection > 0) {
+    // Flat mirror: the slider grows the mirrored band from the bottom edge up to half the height.
+    filters.push(
+      new ReflectionFilter({
+        mirror: true,
+        boundary: 1 - reflection * 0.5,
+        amplitude: [0, 0],
+        waveLength: [30, 100],
+        alpha: [0.9, 0.4],
+      }),
+    );
   }
 
-  // Apply God Ray
-  if (filters.godray > 0) {
-    const rayValue = Math.max(0, Math.min(filters.godray, 1));
-    const rayFilter = new GodrayFilter();
-    rayFilter.angle = 30;
-    rayFilter.gain = rayValue * 0.5;
-    rayFilter.lacunarity = 2;
-    rayFilter.time = 0;
-    appliedFilters.push(rayFilter);
+  const waterReflection = value('waterReflection');
+  if (waterReflection > 0) {
+    // Same mirrored band but rippled: wave amplitude grows with the slider. The ripple is a frozen
+    // frame (`time` is constant) because nothing in the filter pipeline advances time.
+    filters.push(
+      new ReflectionFilter({
+        mirror: true,
+        boundary: 1 - waterReflection * 0.5,
+        amplitude: [2 + waterReflection * 10, 10 + waterReflection * 30],
+        waveLength: [20, 80],
+        alpha: [1, 0.6],
+        time: 1.5,
+      }),
+    );
   }
 
-  // Apply Reflection
-  if (filters.reflection > 0) {
-    const reflectFilter = new ReflectionFilter();
-    // ReflectionFilter properties may not be directly settable
-    appliedFilters.push(reflectFilter);
+  const rgbSplit = value('rgbSplit');
+  if (rgbSplit > 0) {
+    filters.push(
+      new RGBSplitFilter({
+        red: { x: rgbSplit * 5, y: 0 },
+        green: { x: -rgbSplit * 5, y: 0 },
+        blue: { x: rgbSplit * 2, y: 0 },
+      }),
+    );
   }
 
-  // Apply Water Reflection (using regular ReflectionFilter)
-  if (filters.waterReflection > 0) {
-    const waterFilter = new ReflectionFilter();
-    // ReflectionFilter properties may not be directly settable
-    appliedFilters.push(waterFilter);
+  const colorReplace = value('colorReplace');
+  if (colorReplace > 0) {
+    // FilterSettings carries no colours, so the pair is fixed (black -> red); the slider is the tolerance.
+    filters.push(
+      new ColorReplaceFilter({
+        originalColor: 0x000000,
+        targetColor: 0xff0000,
+        tolerance: colorReplace,
+      }),
+    );
   }
 
-  // Apply RGB Split
-  if (filters.rgbSplit > 0) {
-    const rgbValue = Math.max(0, Math.min(filters.rgbSplit, 1));
-    const rgbFilter = new RGBSplitFilter();
-    rgbFilter.red.x = rgbValue * 5;
-    rgbFilter.green.x = -rgbValue * 5;
-    rgbFilter.blue.x = rgbValue * 2;
-    appliedFilters.push(rgbFilter);
+  const multiColorReplace = value('multiColorReplace');
+  if (multiColorReplace > 0) {
+    // Fixed pairs (black -> red, white -> blue); the slider is the shared tolerance.
+    filters.push(
+      new MultiColorReplaceFilter({
+        replacements: [
+          [0x000000, 0xff0000],
+          [0xffffff, 0x0000ff],
+        ],
+        tolerance: multiColorReplace,
+      }),
+    );
   }
 
-  // Apply Color Replace
-  if (filters.colorReplace > 0) {
-    const colorValue = Math.max(0, Math.min(filters.colorReplace, 1));
-    const colorFilter = new ColorReplaceFilter(0x000000, 0xff0000, colorValue);
-    appliedFilters.push(colorFilter);
+  return { filters, geometrySyncs };
+};
+
+/**
+ * Releases filter instances built by this module. Filter#destroy() drops the filter's uniform groups
+ * and bind groups; the compiled GL/GPU programs are shared and cached by Pixi, so they are kept.
+ * The shared displacement-map sprite/texture is not owned by the filter and survives.
+ */
+const destroyFilters = (filters: PIXI.Filter[]) => {
+  for (const filter of filters) {
+    filter.destroy();
+  }
+};
+
+const hasAttachedFilters = (target: PIXI.Container): boolean => {
+  const current = target.filters;
+
+  return Array.isArray(current) ? current.length > 0 : Boolean(current);
+};
+
+const syncGeometry = (target: PIXI.Container, entry: CacheEntry) => {
+  if (entry.geometrySyncs.length === 0) {
+    return;
   }
 
-  // Apply Multi Color Replace
-  if (filters.multiColorReplace > 0) {
-    const multiFilter = new MultiColorReplaceFilter([
-      [0x000000, 0xff0000]
-    ]);
-    appliedFilters.push(multiFilter);
+  const geometry = readGeometry(target);
+  const geometryKey = geometryKeyOf(geometry);
+
+  if (geometryKey === entry.geometryKey) {
+    return;
   }
 
-  sprite.filters = appliedFilters;
+  entry.geometryKey = geometryKey;
+
+  for (const sync of entry.geometrySyncs) {
+    sync(geometry);
+  }
+};
+
+/**
+ * Applies the layer's filter settings to any display object (Sprite, Text, Container...).
+ *
+ * Cached per target: when the settings are unchanged since the last call nothing is rebuilt and
+ * `target.filters` is not touched (only centre/radius of size-dependent filters are refreshed if the
+ * target moved or resized). Default settings attach no filter at all.
+ */
+export const applyFilters = (target: PIXI.Container, filters: FilterSettings): void => {
+  if (target.destroyed) {
+    clearFilterCache(target);
+
+    return;
+  }
+
+  const key = settingsKey(filters);
+  const cached = filterCache.get(target);
+
+  if (cached && cached.key === key) {
+    syncGeometry(target, cached);
+
+    return;
+  }
+
+  const built = isDefaultFilters(filters) ? { filters: [], geometrySyncs: [] } : buildFilters(filters);
+  const entry: CacheEntry = { key, ...built, geometryKey: '' };
+
+  syncGeometry(target, entry);
+
+  if (entry.filters.length > 0) {
+    target.filters = entry.filters;
+  } else if (cached ? cached.filters.length > 0 : hasAttachedFilters(target)) {
+    // Pixi's typings do not accept null here; an empty array removes the filter effect just the same.
+    target.filters = [];
+  }
+
+  filterCache.set(target, entry);
+
+  if (cached) {
+    destroyFilters(cached.filters);
+  }
+};
+
+/**
+ * Forgets (and destroys) the filters cached for a display object. Call it when the object is destroyed
+ * or removed for good. If the object is still alive its filters are detached first.
+ */
+export const clearFilterCache = (target: PIXI.Container): void => {
+  const cached = filterCache.get(target);
+
+  if (!cached) {
+    return;
+  }
+
+  filterCache.delete(target);
+
+  if (!target.destroyed && cached.filters.length > 0) {
+    target.filters = [];
+  }
+
+  destroyFilters(cached.filters);
 };

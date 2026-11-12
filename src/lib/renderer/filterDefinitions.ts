@@ -1,4 +1,6 @@
-// Filter definitions with categories, search terms, and configurations
+// Filter definitions with categories, search terms, and configurations.
+// min/max/default are the single source of truth for src/lib/renderer/filters.ts: values are clamped to
+// [min, max] there, and `default` is always the identity value (default settings attach no filter).
 export interface FilterDefinition {
   key: string;
   label: string;
@@ -25,7 +27,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 1,
     gradient: 'linear-gradient(to right, #000000, #888888, #ffffff)',
-    description: 'Adjust the overall brightness of the image',
+    description: 'Multiply overall brightness (1 = unchanged, 0 = black, 2 = double)',
     searchTerms: ['bright', 'light', 'dark', 'exposure', 'luminance']
   },
   {
@@ -38,7 +40,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 1,
     gradient: 'linear-gradient(to right, #666666, #aaaaaa)',
-    description: 'Adjust the contrast between light and dark areas',
+    description: 'Scale contrast around mid-grey (1 = unchanged, 0 = flat grey)',
     searchTerms: ['contrast', 'difference', 'range', 'dynamic']
   },
   {
@@ -51,7 +53,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 1,
     gradient: 'linear-gradient(to right, #666666, #ff6b6b, #4ecdc4)',
-    description: 'Control the intensity of colors',
+    description: 'Control the intensity of colors (1 = unchanged, 0 = greyscale)',
     searchTerms: ['saturation', 'color', 'vivid', 'muted', 'chroma']
   },
   {
@@ -64,7 +66,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 1,
     default: 0,
     gradient: 'linear-gradient(to right, #ff0000, #00ff00, #0000ff, #ff0000)',
-    description: 'Shift the color spectrum',
+    description: 'Rotate the color spectrum in degrees (0 = unchanged)',
     searchTerms: ['hue', 'color shift', 'tint', 'color wheel']
   },
   {
@@ -77,7 +79,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #666666, #ff6b6b, #4ecdc4)',
-    description: 'Enhance mid-tone saturation',
+    description: 'Extra saturation boost or cut (approximation: up to +/-50% saturation, 0 = unchanged)',
     searchTerms: ['vibrance', 'pop', 'enhance', 'mid-tone']
   },
   {
@@ -90,7 +92,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 1,
     gradient: 'linear-gradient(to right, #000000, #888888, #ffffff)',
-    description: 'Adjust mid-tone brightness',
+    description: 'Gamma curve for mid-tone brightness (1 = unchanged)',
     searchTerms: ['gamma', 'mid-tone', 'curve', 'correction']
   },
   {
@@ -103,7 +105,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #8b4513)',
-    description: 'Apply vintage brown tone',
+    description: 'Blend towards a vintage brown tone (0 = none, 1 = full sepia)',
     searchTerms: ['sepia', 'vintage', 'brown', 'antique', 'old']
   },
   {
@@ -116,7 +118,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Convert to black and white',
+    description: 'Blend towards black and white (0 = none, 1 = fully desaturated)',
     searchTerms: ['grayscale', 'black', 'white', 'monochrome', 'bw']
   },
   {
@@ -129,7 +131,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ffffff)',
-    description: 'Invert all colors',
+    description: 'Blend towards the negative (0 = none, 0.5 = flat grey, 1 = fully inverted)',
     searchTerms: ['invert', 'negative', 'reverse', 'opposite']
   },
 
@@ -157,7 +159,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #666666, #ffffff)',
-    description: 'Enhance or reduce sharpness',
+    description: 'Sharpen (positive) or soften (negative) with a 3x3 convolution kernel',
     searchTerms: ['sharp', 'crisp', 'unsharp', 'mask']
   },
   {
@@ -170,7 +172,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Advanced blur with better performance',
+    description: 'Kawase blur, a cheaper alternative to Gaussian blur',
     searchTerms: ['kawase', 'advanced', 'performance', 'blur']
   },
   {
@@ -183,7 +185,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Radial blur effect',
+    description: 'Radial blur streaking out from the centre',
     searchTerms: ['zoom', 'radial', 'motion', 'speed']
   },
   {
@@ -196,7 +198,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Miniature effect with selective focus',
+    description: 'Miniature effect: sharp horizontal band in the middle, blurred top and bottom',
     searchTerms: ['tilt', 'shift', 'miniature', 'selective', 'focus']
   },
 
@@ -211,7 +213,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #ff0000, #000000, #00ff00)',
-    description: 'Create bulge or pinch distortion',
+    description: 'Bulge (positive) or pinch (negative) around the centre',
     searchTerms: ['bulge', 'pinch', 'distort', 'lens', 'fish eye']
   },
   {
@@ -224,7 +226,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #ff0000, #000000, #00ff00)',
-    description: 'Spiral distortion effect',
+    description: 'Spiral distortion around the centre',
     searchTerms: ['twist', 'spiral', 'rotate', 'swirl']
   },
   {
@@ -237,7 +239,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ff0000)',
-    description: 'Explosion-like distortion',
+    description: 'Static ripple ring around the centre (not animated)',
     searchTerms: ['shockwave', 'explosion', 'wave', 'ripple']
   },
   {
@@ -250,7 +252,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Texture-based displacement',
+    description: 'Warp the image with a smooth noise displacement map',
     searchTerms: ['displacement', 'warp', 'texture', 'map']
   },
 
@@ -278,7 +280,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ffffff)',
-    description: 'Detect and highlight edges',
+    description: 'Draw a black outline around the opaque shape',
     searchTerms: ['outline', 'edge', 'detection', 'border', 'contour']
   },
   {
@@ -343,7 +345,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Halftone dot pattern',
+    description: 'Black and white halftone dot pattern; the slider sets the dot size',
     searchTerms: ['dot', 'halftone', 'screen', 'print', 'newspaper']
   },
   {
@@ -353,10 +355,10 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     category: 'Effects',
     min: 0,
     max: 1,
-    step: 0.01,
+    step: 1,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Crosshatch shading effect',
+    description: 'Black and white crosshatch sketch (on/off, no intensity control)',
     searchTerms: ['crosshatch', 'hatch', 'shading', 'sketch', 'drawing']
   },
 
@@ -371,7 +373,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #00ff00)',
-    description: 'Old CRT monitor effect',
+    description: 'Old CRT monitor effect: curvature, scanlines and vignette',
     searchTerms: ['crt', 'monitor', 'retro', 'vintage', 'scanline']
   },
   {
@@ -384,7 +386,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #8b4513)',
-    description: 'Vintage film with scratches and noise',
+    description: 'Vintage film with sepia, scratches, noise and vignette',
     searchTerms: ['film', 'old', 'vintage', 'scratch', 'noise', 'movie']
   },
   {
@@ -397,7 +399,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ffffff)',
-    description: 'Convert to ASCII characters',
+    description: 'Convert to ASCII characters; the slider sets the character size',
     searchTerms: ['ascii', 'text', 'character', 'terminal', 'code']
   },
   {
@@ -410,7 +412,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Add random noise/grain',
+    description: 'Add static random grain',
     searchTerms: ['noise', 'grain', 'static', 'tv', 'interference']
   },
 
@@ -425,7 +427,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ffff00)',
-    description: 'Advanced bloom lighting effect',
+    description: 'Glow around the bright areas of the image',
     searchTerms: ['bloom', 'light', 'bright', 'hdr', 'glow']
   },
   {
@@ -451,7 +453,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #666666)',
-    description: 'Add reflective surface',
+    description: 'Mirror the image in a band at the bottom; the slider sets the band height',
     searchTerms: ['reflection', 'mirror', 'surface', 'water', 'glass']
   },
   {
@@ -464,7 +466,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #0066cc)',
-    description: 'Water-like reflection with ripples',
+    description: 'Mirrored band at the bottom with static ripples; the slider sets height and ripple strength',
     searchTerms: ['water', 'ripple', 'wave', 'reflection', 'liquid']
   },
   {
@@ -490,7 +492,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ff0000)',
-    description: 'Replace specific colors',
+    description: 'Replace near-black with red; the slider sets the color tolerance',
     searchTerms: ['color', 'replace', 'swap', 'change', 'hue']
   },
   {
@@ -503,7 +505,7 @@ export const FILTER_DEFINITIONS: FilterDefinition[] = [
     step: 0.01,
     default: 0,
     gradient: 'linear-gradient(to right, #000000, #ff0000)',
-    description: 'Replace multiple colors at once',
+    description: 'Replace near-black with red and near-white with blue; the slider sets the tolerance',
     searchTerms: ['multi', 'color', 'replace', 'multiple', 'batch']
   }
 ];

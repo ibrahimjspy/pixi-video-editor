@@ -1,119 +1,307 @@
 'use client';
 
+import { useId, useMemo, useState } from 'react';
+import type { DragEvent } from 'react';
 import { useEditorStore } from '@/store/editorStore';
-import { EditorElement } from '@/types/editor';
+import { getCurrentScene } from '@/lib/editor/defaults';
+import { formatSnapshotTime } from '@/lib/editor/formatting';
+import { Icon, LAYER_TYPE_ICON } from '@/components/icons';
+import { useLayerFields, useSelectedLayerId } from '@/components/inspector/hooks';
 
-const Timeline = () => {
-  const elements = useEditorStore((state) => state.elements);
-  const selectedElementId = useEditorStore((state) => state.selectedElementId);
-  const setSelectedElement = useEditorStore(
-    (state) => state.setSelectedElement,
+/** Marks a drag as a layer reorder, so file drops are never mistaken for one. */
+const LAYER_DRAG_TYPE = 'application/x-signal-layer';
+
+const isLayerDrag = (event: DragEvent<HTMLElement>) =>
+  Array.from(event.dataTransfer.types).includes(LAYER_DRAG_TYPE);
+
+interface LayerRowProps {
+  layerId: string;
+  isSelected: boolean;
+  isFirst: boolean;
+  isLast: boolean;
+  isDragged: boolean;
+  /** Where the drop indicator is drawn on this row, if anywhere. */
+  dropEdge: 'before' | 'after' | null;
+  onMove: (direction: 'forward' | 'backward') => void;
+  onDragStart: (event: DragEvent<HTMLLIElement>) => void;
+  onDragOver: (event: DragEvent<HTMLLIElement>) => void;
+  onDragEnd: () => void;
+  onDrop: (event: DragEvent<HTMLLIElement>) => void;
+}
+
+/**
+ * One layer in the list. It subscribes to its own name, type, and visibility,
+ * so editing another field of the layer does not re-render it.
+ */
+const LayerRow = ({
+  layerId,
+  isSelected,
+  isFirst,
+  isLast,
+  isDragged,
+  dropEdge,
+  onMove,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onDrop,
+}: LayerRowProps) => {
+  const selectLayer = useEditorStore((state) => state.selectLayer);
+  const executeCommand = useEditorStore((state) => state.executeCommand);
+  const layer = useLayerFields(layerId, (entry) => ({
+    name: entry.name,
+    type: entry.type,
+    visible: entry.visible,
+  }));
+
+  if (!layer) {
+    return null;
+  }
+
+  const className = [
+    'signal-layer',
+    isSelected ? 'is-active' : '',
+    isDragged ? 'is-dragged' : '',
+    layer.visible ? '' : 'is-hidden',
+    dropEdge ? `is-drop-${dropEdge}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <li
+      className={className}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDrop={onDrop}
+    >
+      <span className="signal-layer__grip" aria-hidden="true" title="Drag to reorder">
+        <Icon name="grip" />
+      </span>
+      <button
+        type="button"
+        className="signal-layer__select"
+        aria-pressed={isSelected}
+        onClick={() => selectLayer(layerId)}
+      >
+        <Icon name={LAYER_TYPE_ICON[layer.type]} />
+        <span className="signal-layer__name">{layer.name}</span>
+        <small>{layer.type}</small>
+      </button>
+      <button
+        type="button"
+        className="signal-icon-button"
+        aria-label={`Move ${layer.name} forward`}
+        title="Move forward"
+        disabled={isFirst}
+        onClick={() => onMove('forward')}
+      >
+        <Icon name="arrow-up" />
+      </button>
+      <button
+        type="button"
+        className="signal-icon-button"
+        aria-label={`Move ${layer.name} backward`}
+        title="Move backward"
+        disabled={isLast}
+        onClick={() => onMove('backward')}
+      >
+        <Icon name="arrow-down" />
+      </button>
+      <button
+        type="button"
+        className="signal-icon-button"
+        aria-label={`${layer.name} visible`}
+        aria-pressed={layer.visible}
+        title={layer.visible ? 'Hide layer' : 'Show layer'}
+        onClick={() =>
+          executeCommand(
+            { type: 'mute_or_hide_layer', layerId, visible: !layer.visible },
+            'user',
+          )
+        }
+      >
+        <Icon name={layer.visible ? 'eye' : 'eye-off'} />
+      </button>
+      <button
+        type="button"
+        className="signal-icon-button signal-icon-button--danger"
+        aria-label={`Delete ${layer.name}`}
+        title="Delete layer"
+        onClick={() => executeCommand({ type: 'delete_layer', layerId }, 'user')}
+      >
+        <Icon name="trash" />
+      </button>
+    </li>
   );
-  const deleteElement = useEditorStore((state) => state.removeElement);
+};
 
-  const getLabel = (el: EditorElement) => {
-    switch (el.type) {
-      case 'image':
-        return (
-          <img
-            src={el.url}
-            alt="Thumbnail"
-            className="w-full h-full object-cover rounded"
-          />
-        );
-      case 'video':
-        return <div className="text-2xl">🎬</div>;
-      case 'text':
-        return <div className="text-sm font-medium px-2 truncate">{el.text.slice(0, 15)}{el.text.length > 15 ? '...' : ''}</div>;
-      default:
-        return '❓';
-    }
+/** Restorable project snapshots, newest first. */
+const SnapshotList = ({ id }: { id: string }) => {
+  const versions = useEditorStore((state) => state.versions);
+  const restoreVersion = useEditorStore((state) => state.restoreVersion);
+
+  return (
+    <section id={id} className="signal-strip__section signal-strip__section--snapshots">
+      <div className="signal-section-title">
+        <span>Snapshots</span>
+        <span>{versions.length}</span>
+      </div>
+      <div className="signal-version-list">
+        {versions.map((version) => (
+          <button
+            key={version.id}
+            type="button"
+            className="signal-version-item"
+            title="Restore the project to this snapshot (undoable)"
+            onClick={() => restoreVersion(version.id)}
+          >
+            <strong>{version.label}</strong>
+            <small suppressHydrationWarning>
+              {version.source === 'ai' ? 'AI · ' : ''}
+              {formatSnapshotTime(version.createdAt)} UTC
+            </small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+};
+
+/**
+ * Bottom strip: the active scene's layers, top-most first, with selection,
+ * visibility, delete, and reordering by drag and drop or by the arrow
+ * buttons. Snapshots sit behind a toggle.
+ *
+ * The file keeps its historical name; there is no time axis here.
+ */
+const Timeline = () => {
+  const snapshotsId = useId();
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  /** Insertion slot in display order, 0 (above the first row) to n. */
+  const [dropSlot, setDropSlot] = useState<number | null>(null);
+
+  // `layerIds` keeps its identity while a slider previews, so the list does
+  // not re-render during a drag.
+  const layerIds = useEditorStore((state) => getCurrentScene(state.project).layerIds);
+  const selectedLayerId = useSelectedLayerId();
+  const versionCount = useEditorStore((state) => state.versions.length);
+  const executeCommand = useEditorStore((state) => state.executeCommand);
+
+  // Draw order is bottom-first; the list shows the top-most layer first.
+  const displayIds = useMemo(() => [...layerIds].reverse(), [layerIds]);
+  const lastIndex = displayIds.length - 1;
+
+  const reorder = (layerId: string, displayIndex: number) =>
+    executeCommand(
+      { type: 'reorder_layer', layerId, toIndex: lastIndex - displayIndex },
+      'user',
+    );
+
+  const endDrag = () => {
+    setDraggedId(null);
+    setDropSlot(null);
   };
 
-  const getIcon = (el: EditorElement) => {
-    switch (el.type) {
-      case 'image':
-        return '🖼️';
-      case 'video':
-        return '🎬';
-      case 'text':
-        return '✏️';
-      default:
-        return '❓';
+  const handleDragOver = (event: DragEvent<HTMLLIElement>, displayIndex: number) => {
+    if (!isLayerDrag(event)) {
+      return;
     }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const isLowerHalf = event.clientY > bounds.top + bounds.height / 2;
+    setDropSlot(displayIndex + (isLowerHalf ? 1 : 0));
+  };
+
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    if (!isLayerDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const from = draggedId ? displayIds.indexOf(draggedId) : -1;
+
+    if (draggedId && from !== -1 && dropSlot !== null) {
+      // Removing the dragged row shifts every slot below it up by one.
+      const target = dropSlot > from ? dropSlot - 1 : dropSlot;
+
+      if (target !== from) {
+        reorder(draggedId, target);
+      }
+    }
+
+    endDrag();
+  };
+
+  const dropEdgeFor = (displayIndex: number): LayerRowProps['dropEdge'] => {
+    if (draggedId === null || dropSlot === null) {
+      return null;
+    }
+
+    if (dropSlot === displayIndex) {
+      return 'before';
+    }
+
+    return displayIndex === lastIndex && dropSlot === displayIds.length ? 'after' : null;
   };
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Timeline Header */}
-      <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-white">📽️ Timeline</span>
-          <span className="text-xs text-gray-400">({elements.length} layers)</span>
+    <div className={`signal-strip ${showSnapshots ? 'has-snapshots' : ''}`}>
+      <section className="signal-strip__section signal-strip__section--layers">
+        <div className="signal-section-title">
+          <span>
+            Layers <span className="signal-section-title__count">{displayIds.length}</span>
+          </span>
+          <button
+            type="button"
+            className="signal-mini-button"
+            aria-expanded={showSnapshots}
+            aria-controls={snapshotsId}
+            onClick={() => setShowSnapshots((shown) => !shown)}
+          >
+            Snapshots ({versionCount})
+          </button>
         </div>
-      </div>
-
-      {/* Timeline Content */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
-        {elements.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-            <div className="text-center">
-              <div className="text-3xl mb-2">📽️</div>
-              <div>No layers yet</div>
-              <div className="text-xs mt-1">Upload images or videos to get started</div>
-            </div>
-          </div>
+        {displayIds.length === 0 ? (
+          <p className="signal-empty">
+            No layers yet. Imported media and text appear here, top-most first.
+          </p>
         ) : (
-          <div className="flex gap-3 h-full items-center">
-            {elements.map((el) => {
-              const isSelected = selectedElementId === el.id;
-              return (
-                <div
-                  key={el.id}
-                  onClick={() => setSelectedElement(el.id)}
-                  className={`
-                    relative group flex-shrink-0 w-32 h-24 rounded-lg border-2 cursor-pointer
-                    transition-all duration-200 overflow-hidden
-                    ${isSelected 
-                      ? 'border-blue-500 bg-blue-600 shadow-lg shadow-blue-500/50 scale-105' 
-                      : 'border-gray-600 bg-gray-800 hover:border-gray-500 hover:bg-gray-750'
-                    }
-                  `}
-                >
-                  {/* Content */}
-                  <div className="flex items-center justify-center h-full p-2">
-                    {getLabel(el)}
-                  </div>
-
-                  {/* Type Badge */}
-                  <div className="absolute top-1 left-1 text-xs bg-gray-900/80 px-1.5 py-0.5 rounded backdrop-blur-sm">
-                    {getIcon(el)}
-                  </div>
-
-                  {/* Delete Button */}
-                  {isSelected && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteElement(el.id);
-                      }}
-                      className="absolute top-1 right-1 bg-red-500 hover:bg-red-600 text-white rounded p-1 text-xs transition-colors"
-                      title="Delete"
-                    >
-                      🗑️
-                    </button>
-                  )}
-
-                  {/* Hover Overlay */}
-                  {!isSelected && (
-                    <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/10 transition-all pointer-events-none" />
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <ol className="signal-layer-list" aria-label="Layers, top-most first">
+            {displayIds.map((layerId, displayIndex) => (
+              <LayerRow
+                key={layerId}
+                layerId={layerId}
+                isSelected={selectedLayerId === layerId}
+                isFirst={displayIndex === 0}
+                isLast={displayIndex === lastIndex}
+                isDragged={draggedId === layerId}
+                dropEdge={dropEdgeFor(displayIndex)}
+                onMove={(direction) =>
+                  reorder(layerId, displayIndex + (direction === 'forward' ? -1 : 1))
+                }
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(LAYER_DRAG_TYPE, layerId);
+                  event.dataTransfer.effectAllowed = 'move';
+                  setDraggedId(layerId);
+                }}
+                onDragOver={(event) => handleDragOver(event, displayIndex)}
+                onDragEnd={endDrag}
+                onDrop={handleDrop}
+              />
+            ))}
+          </ol>
         )}
-      </div>
+      </section>
+
+      {showSnapshots && <SnapshotList id={snapshotsId} />}
     </div>
   );
 };
