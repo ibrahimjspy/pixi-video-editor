@@ -54,6 +54,7 @@ const LAYER_PATCH_VALIDATORS: Record<string, (value: unknown) => boolean> = {
   fontFamily: isOptionalString,
   color: isOptionalString,
   align: isOptionalAlign,
+  volume: isOptionalNumber,
   trimStartMs: isOptionalNumber,
   trimEndMs: (value) => value === null || isOptionalNumber(value),
   filters: (value) => value === undefined || isFilterPatch(value),
@@ -216,8 +217,19 @@ export const isSupportedCommand = (value: unknown): value is Command => {
       );
     case 'reset_filters':
     case 'duplicate_layer':
-    case 'delete_layer':
       return typeof value.layerId === 'string';
+    case 'delete_layer':
+      return (
+        typeof value.layerId === 'string' &&
+        (value.ripple === undefined || typeof value.ripple === 'boolean')
+      );
+    case 'split_layer':
+      return (
+        typeof value.layerId === 'string' &&
+        typeof value.atMs === 'number' &&
+        Number.isFinite(value.atMs) &&
+        value.atMs >= 0
+      );
     case 'undo':
     case 'redo':
       return true;

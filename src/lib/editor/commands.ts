@@ -20,6 +20,12 @@ import {
 } from '@/lib/editor/defaults';
 import { FILTER_PRESETS } from '@/lib/editor/filterPresets';
 import {
+  canSplitSpanAt,
+  getProjectLayerSpan,
+  getTimelineDurationMs,
+  MIN_CLIP_MS,
+} from '@/lib/editor/timeline';
+import {
   isFilterKey,
   MIN_TRIM_DURATION_MS,
   patchLayerInPlace,
@@ -158,6 +164,12 @@ const insertLayer = (
   project.selection.layerId = layer.id;
 };
 
+/** Length given to a new image or text layer: the whole project so far. */
+const defaultClipDurationMs = (project: Project): number =>
+  getCurrentScene(project).layerIds.length === 0
+    ? getCurrentScene(project).durationMs
+    : getTimelineDurationMs(project);
+
 /**
  * Creates a centered layer that fits inside 72% of the active canvas while
  * preserving the source media's aspect ratio.
@@ -175,10 +187,12 @@ const buildLayerFromAsset = (
 
   const sourceWidth = Math.max(1, asset.width ?? scene.canvasWidth);
   const sourceHeight = Math.max(1, asset.height ?? scene.canvasHeight);
+  // Video fills the canvas (contain); stills sit inside a margin.
+  const fit = asset.kind === 'video' ? 1 : 0.72;
   const scale = Math.min(
     1,
-    (scene.canvasWidth * 0.72) / sourceWidth,
-    (scene.canvasHeight * 0.72) / sourceHeight,
+    (scene.canvasWidth * fit) / sourceWidth,
+    (scene.canvasHeight * fit) / sourceHeight,
   );
   const width = Math.round(sourceWidth * scale);
   const height = Math.round(sourceHeight * scale);
@@ -196,7 +210,6 @@ const buildLayerFromAsset = (
     muted: false,
     filters: createDefaultFilters(),
     opacity: 1,
-    startMs: 0,
   };
   const baseName = asset.name.replace(/\.[^.]+$/, '');
 
@@ -205,23 +218,35 @@ const buildLayerFromAsset = (
       ...base,
       name: baseName || 'Image layer',
       type: 'image',
-      durationMs: scene.durationMs,
+      startMs: 0,
+      durationMs: defaultClipDurationMs(project),
     };
   }
+
+  // New video clips follow the last video on the timeline, so importing
+  // several files lays them out one after another.
+  const startMs = project.layers.reduce((latest, entry) => {
+    return entry.type === 'video' && scene.layerIds.includes(entry.id)
+      ? Math.max(latest, getProjectLayerSpan(project, entry).endMs)
+      : latest;
+  }, 0);
 
   return {
     ...base,
     name: baseName || 'Video layer',
     type: 'video',
+    startMs,
     durationMs: asset.durationMs ?? scene.durationMs,
     trimStartMs: 0,
     trimEndMs: asset.durationMs ?? null,
+    volume: 1,
   };
 };
 
 /** Builds the text layer for a `create_text` or `add_caption_block` command. */
 const buildTextLayer = (
   scene: Scene,
+  durationMs: number,
   command: Extract<Command, { type: 'create_text' | 'add_caption_block' }>,
 ): TextLayer => {
   const shared = {
@@ -236,7 +261,7 @@ const buildTextLayer = (
     opacity: 1,
     align: 'center' as const,
     startMs: 0,
-    durationMs: scene.durationMs,
+    durationMs,
   };
 
   if (command.type === 'create_text') {
@@ -336,7 +361,7 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
     }
     case 'create_text':
     case 'add_caption_block': {
-      insertLayer(project, scene, buildTextLayer(scene, command));
+      insertLayer(project, scene, buildTextLayer(scene, defaultClipDurationMs(project), command));
 
       return done(
         command.type === 'create_text'
@@ -429,6 +454,12 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
               durationMs ?? Number.POSITIVE_INFINITY,
               Math.max(layer.trimStartMs + MIN_TRIM_DURATION_MS, command.trimEndMs),
             );
+
+      const trimmedEnd = layer.trimEndMs ?? durationMs;
+
+      if (trimmedEnd !== undefined) {
+        layer.durationMs = trimmedEnd - layer.trimStartMs;
+      }
 
       return done(`Trimmed ${layer.name}`, { snapshotLabel: `Trim ${layer.name}` });
     }
@@ -562,6 +593,25 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
         return done(`${layer.name} is already up to date`, { mutated: false });
       }
 
+      // A patch is resolved without knowing the source file's length, so a
+      // video's trim range is pulled back inside it here.
+      if (layer.type === 'video') {
+        const sourceMs = getAssetById(project, layer.assetId)?.durationMs;
+
+        if (sourceMs !== undefined) {
+          layer.trimStartMs = Math.min(
+            layer.trimStartMs,
+            Math.max(0, sourceMs - MIN_TRIM_DURATION_MS),
+          );
+
+          if (layer.trimEndMs !== null) {
+            layer.trimEndMs = Math.min(layer.trimEndMs, sourceMs);
+          }
+
+          layer.durationMs = (layer.trimEndMs ?? sourceMs) - layer.trimStartMs;
+        }
+      }
+
       return done(`Adjusted ${layer.name}`, { snapshotLabel: `Adjust ${layer.name}` });
     }
     case 'apply_animation_preset': {
@@ -653,6 +703,10 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
         return fail(LAYER_NOT_FOUND);
       }
 
+      // Measure before removing: the span depends on assets, not on the layer list.
+      const removedSpan = getProjectLayerSpan(project, layer);
+      const removedLength = removedSpan.endMs - removedSpan.startMs;
+
       project.layers = project.layers.filter((entry) => entry.id !== command.layerId);
       project.scenes.forEach((entry) => {
         if (entry.layerIds.includes(command.layerId)) {
@@ -662,9 +716,76 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
       });
       project.selection.layerId = null;
 
-      return done(`Deleted ${layer.name}`, {
-        snapshotLabel: `Delete ${layer.name}`,
-        warnings: ['This action can be reversed from version history.'],
+      let shifted = 0;
+
+      if (command.ripple && removedLength > 0) {
+        project.layers.forEach((entry) => {
+          if (
+            scene.layerIds.includes(entry.id) &&
+            (entry.startMs ?? 0) >= removedSpan.endMs - 1
+          ) {
+            entry.startMs = Math.max(0, (entry.startMs ?? 0) - removedLength);
+            shifted += 1;
+          }
+        });
+      }
+
+      return done(
+        shifted > 0
+          ? `Deleted ${layer.name} and closed the gap (${shifted} later layer${shifted === 1 ? '' : 's'} moved)`
+          : `Deleted ${layer.name}`,
+        {
+          snapshotLabel: `${command.ripple ? 'Ripple delete' : 'Delete'} ${layer.name}`,
+          warnings: ['This action can be reversed from version history.'],
+        },
+      );
+    }
+    case 'split_layer': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      const sourceScene =
+        project.scenes.find((entry) => entry.layerIds.includes(layer.id)) ?? scene;
+      const span = getProjectLayerSpan(project, layer);
+      const atMs = Math.round(command.atMs);
+
+      if (!canSplitSpanAt(span, atMs)) {
+        return fail(
+          `Move the playhead inside ${layer.name}, at least ${MIN_CLIP_MS}ms from either end, to split it`,
+        );
+      }
+
+      const second: Layer = {
+        ...structuredClone(layer),
+        id: uuidv4(),
+        startMs: atMs,
+        durationMs: span.endMs - atMs,
+      };
+
+      layer.durationMs = atMs - span.startMs;
+
+      if (layer.type === 'video' && second.type === 'video') {
+        // The first half ends where the second begins inside the source file.
+        const splitSourceMs = layer.trimStartMs + (atMs - span.startMs);
+
+        layer.trimEndMs = splitSourceMs;
+        second.trimStartMs = splitSourceMs;
+      }
+
+      const sourceIndex = sourceScene.layerIds.indexOf(layer.id);
+
+      insertLayer(
+        project,
+        sourceScene,
+        second,
+        sourceIndex === -1 ? sourceScene.layerIds.length : sourceIndex + 1,
+      );
+
+      return done(`Split ${layer.name} at ${(atMs / 1000).toFixed(2)}s`, {
+        snapshotLabel: `Split ${layer.name}`,
       });
     }
     default: {
@@ -684,7 +805,7 @@ const runPassiveCommand = (command: PassiveCommand): CommandOutcome => {
     case 'export_preview':
       return done(`Prepared ${command.format} export preview`, {
         mutated: false,
-        warnings: ['Export is a product-level stub in this version.'],
+        warnings: ['Rendering a file is started from the Export button; this command only records the request.'],
       });
   }
 };

@@ -89,7 +89,8 @@ export const TOOL_CONTRACTS: ToolContract[] = [
   {
     type: 'trim_clip',
     title: 'Trim Clip',
-    description: 'Store trim information for a video layer.',
+    description:
+      'Trim a video layer to a range of its source file. The layer is shortened on the timeline to match.',
     payloadExample: {
       type: 'trim_clip',
       layerId: 'layer-demo',
@@ -237,6 +238,17 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     payloadExample: {
       type: 'delete_layer',
       layerId: 'layer-demo',
+    },
+  },
+  {
+    type: 'split_layer',
+    title: 'Split Layer',
+    description:
+      'Cut a layer in two at a timeline position. Works for video, image and text layers.',
+    payloadExample: {
+      type: 'split_layer',
+      layerId: 'layer-demo',
+      atMs: 3000,
     },
   },
   {

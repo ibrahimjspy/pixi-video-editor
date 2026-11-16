@@ -25,7 +25,15 @@ export type IconName =
   | 'plus'
   | 'align-left'
   | 'align-center'
-  | 'align-right';
+  | 'align-right'
+  | 'play'
+  | 'pause'
+  | 'split'
+  | 'step-back'
+  | 'step-forward'
+  | 'loop'
+  | 'ripple'
+  | 'export';
 
 const PATHS: Record<IconName, ReactNode> = {
   image: (
@@ -97,6 +105,14 @@ const PATHS: Record<IconName, ReactNode> = {
   'align-left': <path d="M2.500 4h11M2.500 8h7M2.500 12h9" />,
   'align-center': <path d="M2.500 4h11M4.500 8h7M3.500 12h9" />,
   'align-right': <path d="M2.500 4h11M6.500 8h7M4.500 12h9" />,
+  play: <path d="M5 3.500v9l7.500-4.500L5 3.500z" />,
+  pause: <path d="M5.500 3.500v9M10.500 3.500v9" />,
+  split: <path d="M8 2v12M5 5L2.500 8 5 11M11 5l2.500 3L11 11" />,
+  'step-back': <path d="M4 3.500v9M12 3.500L6 8l6 4.500v-9z" />,
+  'step-forward': <path d="M12 3.500v9M4 3.500L10 8l-6 4.500v-9z" />,
+  loop: <path d="M3 7V6a2 2 0 012-2h6.500M10 2l2 2-2 2M13 9v1a2 2 0 01-2 2H4.500M6 14l-2-2 2-2" />,
+  ripple: <path d="M2.500 4.500h5M4 4.500l.5 8h3l.5-8M10 6l3 2-3 2M13 8H9.500" />,
+  export: <path d="M8 2.500v8M4.500 7L8 10.500 11.500 7M3 13h10" />,
 };
 
 interface IconProps {

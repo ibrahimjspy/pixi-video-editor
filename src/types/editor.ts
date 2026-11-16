@@ -75,12 +75,12 @@ export interface BaseLayer extends LayerFrame {
   opacity: number;
   blendMode?: string;
   animationPreset?: string | null;
-  /**
-   * Timeline groundwork: when the layer starts inside its scene. No playback
-   * behaviour reads this yet; it is populated so a later time engine has data.
-   */
+  /** When the layer first appears on the timeline, in milliseconds. Defaults to 0. */
   startMs?: number;
-  /** Timeline groundwork: how long the layer stays on screen. */
+  /**
+   * How long the layer stays on the timeline. For video layers this always
+   * equals the trimmed source length (`trimEndMs - trimStartMs`).
+   */
   durationMs?: number;
 }
 
@@ -92,8 +92,12 @@ export interface ImageLayer extends BaseLayer {
 export interface VideoLayer extends BaseLayer {
   type: 'video';
   assetId: string;
+  /** Where playback begins inside the source file, in milliseconds. */
   trimStartMs: number;
+  /** Where playback ends inside the source file. `null` means the end of the file. */
   trimEndMs: number | null;
+  /** Playback volume from 0 to 1. Missing means full volume. */
+  volume?: number;
 }
 
 export interface TextLayer extends BaseLayer {
@@ -137,7 +141,7 @@ export type LayerPatch = Partial<LayerFrame> &
     >
   > &
   Partial<Pick<TextLayer, 'text' | 'fontSize' | 'fontFamily' | 'color' | 'align'>> &
-  Partial<Pick<VideoLayer, 'trimStartMs' | 'trimEndMs'>> & {
+  Partial<Pick<VideoLayer, 'trimStartMs' | 'trimEndMs' | 'volume'>> & {
     filters?: Partial<FilterSettings>;
   };
 
@@ -321,6 +325,20 @@ export type Command =
   | {
       type: 'delete_layer';
       layerId: string;
+      /**
+       * Closes the gap the layer leaves: layers that start at or after its end
+       * move earlier by its length.
+       */
+      ripple?: boolean;
+    }
+  | {
+      /**
+       * Cuts a layer in two at a timeline position. The first part keeps the
+       * layer's id; the second part is a new layer placed directly above it.
+       */
+      type: 'split_layer';
+      layerId: string;
+      atMs: number;
     }
   | {
       /** Sets any subset of a layer's frame as one undoable edit. */

@@ -1,5 +1,8 @@
 import { useEffect } from 'react';
 import { useEditorStore } from '@/store/editorStore';
+import { usePlaybackStore } from '@/store/playbackStore';
+import { getTimelineDurationMs } from '@/lib/editor/timeline';
+import { rippleDeleteSelected, splitSelectedAtPlayhead } from '@/lib/editor/timelineActions';
 
 /** Whether keystrokes aimed at this element belong to a text or value editor. */
 const isEditableTarget = (target: EventTarget | null): boolean => {
@@ -25,8 +28,11 @@ const NUDGE: Record<string, { x: number; y: number }> = {
 /**
  * Registers the editor's global keyboard shortcuts once, on `window`.
  *
+ * - Space plays or pauses; Home/End jump to the start/end
+ * - `,` and `.` step one frame back/forward (Shift: one second)
+ * - S splits the selected layer at the playhead
  * - Cmd/Ctrl+Z undo; Shift+Cmd/Ctrl+Z or Ctrl+Y redo
- * - Delete/Backspace deletes the selected layer
+ * - Delete/Backspace deletes the selected layer; with Shift it also closes the gap
  * - Cmd/Ctrl+D duplicates it
  * - Arrow keys nudge it by 1px (Shift: 10px), one undo step per key press
  *
@@ -41,9 +47,50 @@ export const useEditorShortcuts = () => {
         return;
       }
 
+      // A dialog is open: keys belong to it, not to the editor behind it.
+      if (document.querySelector('[aria-modal="true"]')) {
+        return;
+      }
+
+      const playback = usePlaybackStore.getState();
+
+      // An export owns the preview; nothing else may move it or the project.
+      if (playback.isLocked) {
+        return;
+      }
+
       const store = useEditorStore.getState();
       const hasModifier = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
+
+      if (!hasModifier && !event.altKey) {
+        if (event.key === ' ') {
+          event.preventDefault();
+          playback.toggle();
+          return;
+        }
+
+        if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          playback.seek(event.key === 'Home' ? 0 : getTimelineDurationMs(store.project), {
+            pause: true,
+          });
+          return;
+        }
+
+        if (event.key === ',' || event.key === '.' || event.key === '<' || event.key === '>') {
+          event.preventDefault();
+          const direction = event.key === ',' || event.key === '<' ? -1 : 1;
+          playback.stepFrames(direction * (event.shiftKey ? 30 : 1));
+          return;
+        }
+
+        if (key === 's' && !event.shiftKey) {
+          event.preventDefault();
+          splitSelectedAtPlayhead();
+          return;
+        }
+      }
 
       if (hasModifier && !event.altKey && key === 'z') {
         event.preventDefault();
@@ -80,7 +127,12 @@ export const useEditorShortcuts = () => {
 
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
-        store.executeCommand({ type: 'delete_layer', layerId }, 'user');
+
+        if (event.shiftKey) {
+          rippleDeleteSelected();
+        } else {
+          store.executeCommand({ type: 'delete_layer', layerId }, 'user');
+        }
         return;
       }
 
@@ -105,8 +157,24 @@ export const useEditorShortcuts = () => {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    // A focused button would otherwise also "click" when Space is released,
+    // for example re-running Split right after the user pressed Space to play.
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (
+        event.key === ' ' &&
+        !isEditableTarget(event.target) &&
+        !document.querySelector('[aria-modal="true"]')
+      ) {
+        event.preventDefault();
+      }
+    };
 
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, []);
 };

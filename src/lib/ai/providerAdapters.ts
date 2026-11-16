@@ -6,6 +6,7 @@ import {
   getCurrentScene,
 } from '@/lib/editor/defaults';
 import { TOOL_CONTRACTS } from '@/lib/editor/toolContracts';
+import { getProjectLayerSpan, getTimelineDurationMs } from '@/lib/editor/timeline';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -50,6 +51,8 @@ const PAYLOAD_NOTES: Record<string, string> = {
     'params may contain opacity (0-1), rotation, and for text layers color (hex), fontSize, fontFamily. Omit params you do not change.',
   apply_animation_preset: 'preset must be one of "drift-in", "punch-zoom", "soft-fade".',
   mute_or_hide_layer: 'Provide "visible" and/or "muted" booleans.',
+  split_layer: 'atMs is a timeline position in milliseconds and must fall inside the layer\'s startMs..endMs, at least 250ms from either end.',
+  delete_layer: 'Optional "ripple": true also moves later layers earlier to close the gap.',
 };
 
 export const getProviderModelOptions = (provider: ProviderConfig['provider']) =>
@@ -312,7 +315,7 @@ export const summarizeProject = (project: Project) => {
       width: scene.canvasWidth,
       height: scene.canvasHeight,
       aspectRatio: scene.aspectRatio,
-      durationMs: scene.durationMs,
+      durationMs: getTimelineDurationMs(project),
     },
     selectedLayerId: layers.some((layer) => layer.id === selectedLayerId) ? selectedLayerId : null,
     /** Ordered bottom-most first; the array index is the layer's reorder index. */
@@ -329,6 +332,8 @@ export const summarizeProject = (project: Project) => {
         rotation: round(layer.rotation),
         opacity: round(layer.opacity),
         visible: layer.visible,
+        startMs: Math.round(getProjectLayerSpan(project, layer).startMs),
+        endMs: Math.round(getProjectLayerSpan(project, layer).endMs),
       };
 
       if (layer.muted) {

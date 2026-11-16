@@ -133,6 +133,7 @@ export class InteractionController {
   private selectedLayerId: string | null = null;
   private drag: DragState | null = null;
   private viewScale = 1;
+  private suspended = false;
   private destroyed = false;
 
   constructor(app: PIXI.Application, host: InteractionHost) {
@@ -218,6 +219,12 @@ export class InteractionController {
     }
   }
 
+  /** Hides the selection UI entirely, for example while exporting. */
+  setSuspended(suspended: boolean) {
+    this.suspended = suspended;
+    this.refresh();
+  }
+
   /** Redraws the outline and handles around the selected layer. */
   refresh() {
     if (this.destroyed) {
@@ -226,14 +233,16 @@ export class InteractionController {
 
     const layerId = this.selectedLayerId;
     const layer = layerId ? this.host.getLayer(layerId) : undefined;
+    const display = layerId ? this.host.getDisplay(layerId) : undefined;
 
-    if (!layerId || !layer || !layer.visible) {
+    // Nothing to grab when the layer is hidden, still loading, or not on
+    // screen at the playhead's current time.
+    if (this.suspended || !layerId || !layer || !layer.visible || !display?.visible) {
       this.overlay.visible = false;
       return;
     }
 
     const frame = this.getDragFrame(layerId) ?? layer;
-    const display = this.host.getDisplay(layerId);
     // Text height is whatever the wrapped glyphs need, not the stored height.
     const height = layer.type === 'text' && display ? display.height : frame.height;
     const unit = 1 / this.viewScale;

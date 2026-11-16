@@ -8,6 +8,7 @@ import Timeline from '@/components/Timeline';
 import RightPanel from '@/components/inspector/RightPanel';
 import { useEditorShortcuts } from '@/components/useEditorShortcuts';
 import { useEditorStore } from '@/store/editorStore';
+import { startHiddenTabPause, startPlayheadClamp } from '@/store/playbackStore';
 
 /**
  * The one restore of the saved project for this page load. Kept at module
@@ -18,6 +19,9 @@ let hydration: Promise<boolean> | null = null;
 
 export default function Home() {
   useEditorShortcuts();
+
+  useEffect(() => startPlayheadClamp(), []);
+  useEffect(() => startHiddenTabPause(), []);
 
   // Restore the saved project first, then start saving. Starting autosave
   // earlier could overwrite the saved project with the empty default one.

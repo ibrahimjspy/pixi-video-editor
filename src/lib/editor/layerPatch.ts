@@ -94,14 +94,33 @@ export const resolveLayerPatch = (
   }
 
   if (layer.type === 'video') {
-    if (isFiniteNumber(patch.trimStartMs)) next.trimStartMs = Math.max(0, patch.trimStartMs);
+    if (isFiniteNumber(patch.volume)) next.volume = clamp(patch.volume, 0, 1);
+
+    // A video layer's timeline length is its trimmed source range, so trim
+    // points and duration are resolved together and kept consistent.
+    const trimStart = isFiniteNumber(patch.trimStartMs)
+      ? Math.max(0, patch.trimStartMs)
+      : layer.trimStartMs;
+    let trimEnd = layer.trimEndMs;
+
     if (patch.trimEndMs === null) {
-      next.trimEndMs = null;
+      trimEnd = null;
     } else if (isFiniteNumber(patch.trimEndMs)) {
-      next.trimEndMs = Math.max(
-        (next.trimStartMs ?? layer.trimStartMs) + MIN_TRIM_DURATION_MS,
-        patch.trimEndMs,
-      );
+      trimEnd = patch.trimEndMs;
+    } else if (isFiniteNumber(patch.durationMs)) {
+      trimEnd = trimStart + patch.durationMs;
+    }
+
+    if (trimEnd !== null) {
+      trimEnd = Math.max(trimStart + MIN_TRIM_DURATION_MS, trimEnd);
+    }
+
+    if (isFiniteNumber(patch.trimStartMs)) next.trimStartMs = trimStart;
+    if (patch.trimEndMs !== undefined || trimEnd !== layer.trimEndMs) next.trimEndMs = trimEnd;
+    if (trimEnd !== null) {
+      next.durationMs = trimEnd - trimStart;
+    } else if (!isFiniteNumber(patch.durationMs)) {
+      delete next.durationMs;
     }
   }
 

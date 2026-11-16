@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { RendererManager, RenderRequest } from '@/lib/renderer/RendererManager';
 import { useEditorStore } from '@/store/editorStore';
+import { usePlaybackStore } from '@/store/playbackStore';
 import { getAssetById, getCurrentLayers, getCurrentScene } from '@/lib/editor/defaults';
+import { setPreviewHandle } from '@/lib/renderer/previewHandle';
 
 /**
  * Owns the Pixi application lifecycle and keeps the active project scene in
@@ -76,6 +78,8 @@ const VideoPreview = () => {
     }
 
     renderer.renderScene(renderRequestRef.current);
+    const { currentMs, isPlaying } = usePlaybackStore.getState();
+    renderer.setTime(currentMs, isPlaying);
     renderer.setViewScale(viewScaleRef.current);
     app.canvas.style.width = '100%';
     app.canvas.style.height = '100%';
@@ -117,6 +121,7 @@ const VideoPreview = () => {
         renderer = new RendererManager(app);
         appRef.current = app;
         rendererRef.current = renderer;
+        setPreviewHandle({ app, renderer });
         syncRenderer();
       })
       .catch((error) => {
@@ -130,6 +135,7 @@ const VideoPreview = () => {
 
       if (rendererRef.current === renderer) {
         rendererRef.current = null;
+        setPreviewHandle(null);
       }
       if (appRef.current === app) {
         appRef.current = null;
@@ -146,6 +152,18 @@ const VideoPreview = () => {
   useEffect(() => {
     syncRenderer();
   }, [assets, layers, project.selection.layerId, scene, selectLayer, viewScale, syncRenderer]);
+
+  // The playhead drives the renderer directly, outside React, so a playing
+  // timeline never re-renders this component.
+  useEffect(
+    () =>
+      usePlaybackStore.subscribe((state, previous) => {
+        if (state.currentMs !== previous.currentMs || state.isPlaying !== previous.isPlaying) {
+          rendererRef.current?.setTime(state.currentMs, state.isPlaying);
+        }
+      }),
+    [],
+  );
 
   // Track how much room the viewport panel has for the canvas.
   useEffect(() => {
@@ -223,6 +241,7 @@ const VideoPreview = () => {
         <div className="signal-inline-stats">
           <span>Drag to move</span>
           <span>Corner handles resize · Shift frees the aspect ratio</span>
+          <span>Space plays · S splits</span>
         </div>
         <div className="signal-inline-stats">
           <span>{selectedAsset?.name ?? 'Select a layer for context'}</span>

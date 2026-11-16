@@ -1,10 +1,11 @@
 'use client';
 
+import { useId } from 'react';
 import { useEditorStore } from '@/store/editorStore';
 import { Icon } from '@/components/icons';
 import NumberField from '@/components/inspector/NumberField';
 import Section from '@/components/inspector/Section';
-import { useLayerFields } from '@/components/inspector/hooks';
+import { useGestureHandlers, useLayerFields } from '@/components/inspector/hooks';
 
 interface VideoSectionProps {
   layerId: string;
@@ -17,21 +18,26 @@ const toMilliseconds = (seconds: number) => Math.round(seconds * 1000);
 /**
  * Audio and trim settings of a video layer.
  *
- * Trim points are saved on the layer through `trim_clip`, but nothing in the
- * preview reads them yet, and the section says so.
+ * Trim points choose which part of the source file plays. They shorten or
+ * lengthen the clip on the timeline to match, so trimming here and dragging a
+ * clip's edge on the timeline are the same edit.
  */
 const VideoSection = ({ layerId }: VideoSectionProps) => {
+  const volumeId = useId();
+  const volumeGesture = useGestureHandlers('Volume');
+  const previewLayerPatch = useEditorStore((state) => state.previewLayerPatch);
   const executeCommand = useEditorStore((state) => state.executeCommand);
   const layer = useLayerFields(layerId, (entry) =>
     entry.type === 'video'
       ? {
           isVideo: true,
           muted: entry.muted,
+          volume: entry.volume ?? 1,
           trimStartMs: entry.trimStartMs,
           trimEndMs: entry.trimEndMs,
           assetId: entry.assetId,
         }
-      : { isVideo: false, muted: false, trimStartMs: 0, trimEndMs: null, assetId: '' },
+      : { isVideo: false, muted: false, volume: 1, trimStartMs: 0, trimEndMs: null, assetId: '' },
   );
   const assetId = layer?.assetId ?? '';
   const durationMs = useEditorStore(
@@ -71,6 +77,24 @@ const VideoSection = ({ layerId }: VideoSectionProps) => {
         </span>
       </div>
 
+      <div className="signal-slider">
+        <div className="signal-slider__head">
+          <label htmlFor={volumeId}>Volume</label>
+          <output htmlFor={volumeId}>{layer.muted ? 'Muted' : `${Math.round(layer.volume * 100)}%`}</output>
+        </div>
+        <input
+          id={volumeId}
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={layer.volume}
+          disabled={layer.muted}
+          onChange={(event) => previewLayerPatch(layerId, { volume: Number(event.target.value) })}
+          {...volumeGesture}
+        />
+      </div>
+
       <div className="signal-field-grid">
         <NumberField
           label="Trim start"
@@ -105,7 +129,8 @@ const VideoSection = ({ layerId }: VideoSectionProps) => {
       </div>
 
       <p className="signal-note">
-        Trim is stored, not yet applied to playback: the preview always plays the whole clip.
+        Trim controls which part of the file plays; the clip on the timeline changes length to
+        match. Audio plays while the timeline plays and is included in exports.
       </p>
     </Section>
   );

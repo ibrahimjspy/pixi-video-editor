@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import { useEditorStore } from '@/store/editorStore';
 import { Icon } from '@/components/icons';
+import ExportDialog from '@/components/ExportDialog';
 
 /**
  * Top bar: project name, AI provider status, undo/redo, and export.
@@ -18,6 +20,7 @@ const ProjectBar = () => {
   const setProjectName = useEditorStore((state) => state.setProjectName);
   const undo = useEditorStore((state) => state.undo);
   const redo = useEditorStore((state) => state.redo);
+  const [isExportOpen, setIsExportOpen] = useState(false);
 
   return (
     <header className="signal-topbar">
@@ -81,13 +84,15 @@ const ProjectBar = () => {
           <button
             type="button"
             className="signal-button signal-button--primary"
-            disabled
-            title="Export is not implemented yet: the editor cannot render a video or image file."
+            title="Render the timeline to a video file"
+            onClick={() => setIsExportOpen(true)}
           >
-            Export (not implemented)
+            <Icon name="export" />
+            Export
           </button>
         </div>
       </div>
+      {isExportOpen && <ExportDialog onClose={() => setIsExportOpen(false)} />}
     </header>
   );
 };

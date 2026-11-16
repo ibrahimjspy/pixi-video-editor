@@ -5,6 +5,7 @@ import CanvasSection from '@/components/inspector/CanvasSection';
 import FilterSection from '@/components/inspector/FilterSection';
 import LayerSection from '@/components/inspector/LayerSection';
 import TextSection from '@/components/inspector/TextSection';
+import TimingSection from '@/components/inspector/TimingSection';
 import TransformSection from '@/components/inspector/TransformSection';
 import VideoSection from '@/components/inspector/VideoSection';
 import { useSelectedLayerId } from '@/components/inspector/hooks';
@@ -42,6 +43,7 @@ const Inspector = () => {
       <LayerSection key={`layer-${layerId}`} layerId={layerId} />
       <TransformSection key={`transform-${layerId}`} layerId={layerId} />
       {layerType === 'text' && <TextSection key={`text-${layerId}`} layerId={layerId} />}
+      <TimingSection key={`timing-${layerId}`} layerId={layerId} />
       {layerType === 'video' && <VideoSection key={`video-${layerId}`} layerId={layerId} />}
       <FilterSection key={`filters-${layerId}`} layerId={layerId} />
       <CanvasSection defaultOpen={false} />
