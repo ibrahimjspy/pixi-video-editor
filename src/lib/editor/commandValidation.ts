@@ -1,6 +1,6 @@
 import { Asset, Command } from '@/types/editor';
-import { FILTER_PRESET_NAMES } from '@/lib/editor/filterPresets';
-import { isFilterKey } from '@/lib/editor/layerPatch';
+import { isEffectType } from '@/lib/effects/registry';
+import { isLookId } from '@/lib/effects/looks';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -24,16 +24,22 @@ const isOptionalBoolean = (value: unknown): value is boolean | undefined =>
 const isOptionalAlign = (value: unknown): boolean =>
   value === undefined || value === 'left' || value === 'center' || value === 'right';
 
-/**
- * Validates a partial filter map: every key must be a filter declared in
- * FILTER_DEFINITIONS and every value a finite number.
- */
-const isFilterPatch = (value: unknown): boolean =>
+/** Validates a map of effect control values: numbers, strings and booleans only. */
+const isEffectParams = (value: unknown): boolean =>
   isRecord(value) &&
-  Object.entries(value).every(
-    ([key, entry]) =>
-      isFilterKey(key) && typeof entry === 'number' && Number.isFinite(entry),
+  Object.values(value).every(
+    (entry) =>
+      (typeof entry === 'number' && Number.isFinite(entry)) ||
+      typeof entry === 'string' ||
+      typeof entry === 'boolean',
   );
+
+const isOptionalEffectParams = (value: unknown): boolean =>
+  value === undefined || isEffectParams(value);
+
+const isOptionalIntensity = (value: unknown): boolean =>
+  value === undefined ||
+  (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1);
 
 const LAYER_PATCH_VALIDATORS: Record<string, (value: unknown) => boolean> = {
   x: isOptionalNumber,
@@ -57,7 +63,12 @@ const LAYER_PATCH_VALIDATORS: Record<string, (value: unknown) => boolean> = {
   volume: isOptionalNumber,
   trimStartMs: isOptionalNumber,
   trimEndMs: (value) => value === null || isOptionalNumber(value),
-  filters: (value) => value === undefined || isFilterPatch(value),
+  effectParams: (value) =>
+    value === undefined || (isRecord(value) && Object.values(value).every(isEffectParams)),
+  effectEnabled: (value) =>
+    value === undefined ||
+    (isRecord(value) && Object.values(value).every((entry) => typeof entry === 'boolean')),
+  lookIntensity: isOptionalIntensity,
 };
 
 /**
@@ -155,10 +166,58 @@ export const isSupportedCommand = (value: unknown): value is Command => {
         typeof value.toIndex === 'number' &&
         Number.isInteger(value.toIndex)
       );
-    case 'apply_filter_preset':
+    case 'add_effect':
       return (
         typeof value.layerId === 'string' &&
-        (FILTER_PRESET_NAMES as readonly unknown[]).includes(value.preset)
+        isEffectType(value.effect) &&
+        isOptionalEffectParams(value.params) &&
+        (value.index === undefined ||
+          (typeof value.index === 'number' && Number.isInteger(value.index) && value.index >= 0))
+      );
+    case 'update_effect':
+      return (
+        typeof value.layerId === 'string' &&
+        typeof value.effectId === 'string' &&
+        isOptionalEffectParams(value.params) &&
+        isOptionalBoolean(value.enabled) &&
+        (value.params !== undefined || value.enabled !== undefined)
+      );
+    case 'remove_effect':
+      return typeof value.layerId === 'string' && typeof value.effectId === 'string';
+    case 'reorder_effect':
+      return (
+        typeof value.layerId === 'string' &&
+        typeof value.effectId === 'string' &&
+        typeof value.toIndex === 'number' &&
+        Number.isInteger(value.toIndex)
+      );
+    case 'set_effects':
+      return (
+        typeof value.layerId === 'string' &&
+        Array.isArray(value.effects) &&
+        value.effects.every(
+          (entry) =>
+            isRecord(entry) &&
+            isEffectType(entry.type) &&
+            isOptionalEffectParams(entry.params) &&
+            isOptionalBoolean(entry.enabled),
+        ) &&
+        (value.look === undefined ||
+          value.look === null ||
+          (isRecord(value.look) && isLookId(value.look.id) && isOptionalIntensity(value.look.intensity)))
+      );
+    case 'set_look':
+      return (
+        typeof value.layerId === 'string' &&
+        (value.look === null || isLookId(value.look)) &&
+        isOptionalIntensity(value.intensity)
+      );
+    case 'add_adjustment_layer':
+      return (
+        isOptionalString(value.name) &&
+        isOptionalNumber(value.startMs) &&
+        isOptionalNumber(value.durationMs) &&
+        (value.durationMs === undefined || value.durationMs > 0)
       );
     case 'set_layer_frame':
       return (
@@ -169,8 +228,6 @@ export const isSupportedCommand = (value: unknown): value is Command => {
         isOptionalNumber(value.height) &&
         isOptionalNumber(value.rotation)
       );
-    case 'set_filters':
-      return typeof value.layerId === 'string' && isFilterPatch(value.filters);
     case 'update_text':
       return (
         typeof value.layerId === 'string' &&
@@ -215,7 +272,7 @@ export const isSupportedCommand = (value: unknown): value is Command => {
         (value.muted === undefined || typeof value.muted === 'boolean') &&
         (value.visible === undefined || typeof value.visible === 'boolean')
       );
-    case 'reset_filters':
+    case 'clear_effects':
     case 'duplicate_layer':
       return typeof value.layerId === 'string';
     case 'delete_layer':

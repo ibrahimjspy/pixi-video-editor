@@ -33,7 +33,11 @@ export type IconName =
   | 'step-forward'
   | 'loop'
   | 'ripple'
-  | 'export';
+  | 'export'
+  | 'effects'
+  | 'copy'
+  | 'paste'
+  | 'close';
 
 const PATHS: Record<IconName, ReactNode> = {
   image: (
@@ -113,6 +117,10 @@ const PATHS: Record<IconName, ReactNode> = {
   loop: <path d="M3 7V6a2 2 0 012-2h6.500M10 2l2 2-2 2M13 9v1a2 2 0 01-2 2H4.500M6 14l-2-2 2-2" />,
   ripple: <path d="M2.500 4.500h5M4 4.500l.5 8h3l.5-8M10 6l3 2-3 2M13 8H9.500" />,
   export: <path d="M8 2.500v8M4.500 7L8 10.500 11.500 7M3 13h10" />,
+  effects: <path d="M6 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3zM11.500 9l.6 1.900 1.900.6-1.900.6-.6 1.900-.6-1.900-1.900-.6 1.900-.6.6-1.900z" />,
+  copy: <path d="M5.500 5.500h7v7h-7zM3.500 10.500v-7h7" />,
+  paste: <path d="M5.500 3.500h-2v10h9v-10h-2M5.500 2.500h5v2h-5zM6 8h4M6 10.500h4" />,
+  close: <path d="M4 4l8 8M12 4l-8 8" />,
 };
 
 interface IconProps {
@@ -146,4 +154,5 @@ export const LAYER_TYPE_ICON: Record<LayerType, IconName> = {
   image: 'image',
   video: 'video',
   text: 'text',
+  adjustment: 'effects',
 };

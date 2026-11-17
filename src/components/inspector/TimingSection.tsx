@@ -23,7 +23,9 @@ const TimingSection = ({ layerId }: TimingSectionProps) => {
   const executeCommand = useEditorStore((state) => state.executeCommand);
   const layer = useEditorStore((state) => state.project.layers.find((entry) => entry.id === layerId));
   const asset = useEditorStore((state) =>
-    layer && layer.type !== 'text' ? getAssetById(state.project, layer.assetId) : undefined,
+    layer && (layer.type === 'image' || layer.type === 'video')
+      ? getAssetById(state.project, layer.assetId)
+      : undefined,
   );
   const fallbackMs = useEditorStore((state) => getCurrentScene(state.project).durationMs);
 

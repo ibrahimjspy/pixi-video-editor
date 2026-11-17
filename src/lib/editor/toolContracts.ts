@@ -109,36 +109,102 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     },
   },
   {
-    type: 'apply_filter_preset',
-    title: 'Apply Filter Preset',
-    description: 'Apply a reusable visual treatment without exposing dozens of sliders.',
+    type: 'set_look',
+    title: 'Set Look',
+    description:
+      'Apply a named colour look from the look library to a layer, blended at an intensity from 0 to 1. Pass look: null to remove it. The quickest way to grade a clip.',
     payloadExample: {
-      type: 'apply_filter_preset',
+      type: 'set_look',
       layerId: 'layer-demo',
-      preset: 'cinematic',
+      look: 'cinematic',
+      intensity: 0.8,
     },
   },
   {
-    type: 'set_filters',
-    title: 'Set Filters',
+    type: 'add_effect',
+    title: 'Add Effect',
     description:
-      'Merge individual filter values onto a layer. Keys must be known filter names; values are clamped to each filter range.',
+      'Add one effect to the end of a layer\'s effect stack. Effects run in order after the look. Only pass the controls you want to differ from their defaults.',
     payloadExample: {
-      type: 'set_filters',
+      type: 'add_effect',
       layerId: 'layer-demo',
-      filters: {
-        brightness: 1.1,
-        blur: 0.2,
+      effect: 'glow',
+      params: {
+        color: '#ffcc00',
+        outer: 3,
       },
     },
   },
   {
-    type: 'reset_filters',
-    title: 'Reset Filters',
-    description: 'Return every filter on a layer to its default value.',
+    type: 'update_effect',
+    title: 'Update Effect',
+    description:
+      'Change controls of an effect already on a layer, or switch it on or off. effectId comes from the layer\'s "effects" list in the project summary.',
     payloadExample: {
-      type: 'reset_filters',
+      type: 'update_effect',
       layerId: 'layer-demo',
+      effectId: 'effect-demo',
+      params: {
+        strength: 12,
+      },
+      enabled: true,
+    },
+  },
+  {
+    type: 'remove_effect',
+    title: 'Remove Effect',
+    description: 'Remove one effect from a layer.',
+    payloadExample: {
+      type: 'remove_effect',
+      layerId: 'layer-demo',
+      effectId: 'effect-demo',
+    },
+  },
+  {
+    type: 'reorder_effect',
+    title: 'Reorder Effect',
+    description: 'Move an effect to another position in its layer\'s stack (0 is applied first).',
+    payloadExample: {
+      type: 'reorder_effect',
+      layerId: 'layer-demo',
+      effectId: 'effect-demo',
+      toIndex: 0,
+    },
+  },
+  {
+    type: 'set_effects',
+    title: 'Set Effects',
+    description:
+      'Replace a layer\'s whole effect stack in one step, optionally with a look. Use it to copy a treatment from one layer to another.',
+    payloadExample: {
+      type: 'set_effects',
+      layerId: 'layer-demo',
+      effects: [
+        { type: 'colorAdjust', params: { contrast: 1.15, temperature: 0.2 } },
+        { type: 'vignette', params: { amount: 0.5 } },
+      ],
+      look: { id: 'warm-film', intensity: 0.7 },
+    },
+  },
+  {
+    type: 'clear_effects',
+    title: 'Clear Effects',
+    description: 'Remove every effect and the look from a layer.',
+    payloadExample: {
+      type: 'clear_effects',
+      layerId: 'layer-demo',
+    },
+  },
+  {
+    type: 'add_adjustment_layer',
+    title: 'Add Adjustment Layer',
+    description:
+      'Add a layer with no picture whose look and effects apply to every layer beneath it for its time span. Use it to grade the whole video at once, then target it with set_look or add_effect.',
+    payloadExample: {
+      type: 'add_adjustment_layer',
+      name: 'Grade',
+      startMs: 0,
+      durationMs: 8000,
     },
   },
   {
@@ -170,15 +236,13 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     type: 'patch_layer',
     title: 'Patch Layer',
     description:
-      'Change several properties of one layer at once (frame, opacity, visibility, name, text, trim, filters). Use a more specific tool when one fits.',
+      'Change several properties of one layer at once (frame, opacity, visibility, name, text, trim). Use a more specific tool when one fits.',
     payloadExample: {
       type: 'patch_layer',
       layerId: 'layer-demo',
       patch: {
         opacity: 0.8,
-        filters: {
-          contrast: 1.1,
-        },
+        visible: true,
       },
     },
   },

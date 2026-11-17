@@ -262,6 +262,15 @@ const AssetShelf = () => {
             <Icon name="plus" />
             Add caption
           </button>
+          <button
+            type="button"
+            className="signal-tile"
+            title="A layer whose look and effects apply to everything beneath it"
+            onClick={() => executeCommand({ type: 'add_adjustment_layer' }, 'user')}
+          >
+            <Icon name="effects" />
+            Adjustment layer
+          </button>
         </div>
       </section>
 

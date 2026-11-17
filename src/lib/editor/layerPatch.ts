@@ -1,16 +1,9 @@
-import { FilterSettings, Layer, LayerPatch, Project } from '@/types/editor';
-import { FILTER_DEFINITIONS } from '@/lib/renderer/filterDefinitions';
+import { EffectInstance, Layer, LayerLook, LayerPatch, Project } from '@/types/editor';
 import { MIN_LAYER_SIZE } from '@/lib/editor/defaults';
+import { clampIntensity, mergeEffectParams } from '@/lib/effects/stack';
 
 /** Shortest clip, in milliseconds, a trim may leave behind. */
 export const MIN_TRIM_DURATION_MS = 250;
-
-const FILTER_RANGES = new Map(
-  FILTER_DEFINITIONS.map((definition) => [
-    definition.key,
-    { min: definition.min, max: definition.max },
-  ]),
-);
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -18,44 +11,55 @@ const isFiniteNumber = (value: unknown): value is number =>
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 
-/** Returns whether a string names a filter declared in FILTER_DEFINITIONS. */
-export const isFilterKey = (key: string): key is keyof FilterSettings =>
-  FILTER_RANGES.has(key);
+const isSameParams = (a: EffectInstance['params'], b: EffectInstance['params']) => {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
 
-/**
- * Drops unknown keys and non-finite values from a filter patch and clamps the
- * rest to the range declared by each filter definition.
- */
-export const sanitizeFilterPatch = (
-  patch: Partial<FilterSettings> | undefined,
-): Partial<FilterSettings> => {
-  const next: Partial<FilterSettings> = {};
-
-  if (!patch) {
-    return next;
-  }
-
-  Object.entries(patch).forEach(([key, value]) => {
-    const range = FILTER_RANGES.get(key);
-
-    if (range && isFilterKey(key) && isFiniteNumber(value)) {
-      next[key] = clamp(value, range.min, range.max);
-    }
-  });
-
-  return next;
+  return [...keys].every((key) => a[key] === b[key]);
 };
 
-/** A layer patch whose filters have been merged into a complete set. */
-export type ResolvedLayerPatch = Omit<LayerPatch, 'filters'> & {
-  filters?: FilterSettings;
+/**
+ * Applies `effectParams` and `effectEnabled` to a stack. Effects that do not
+ * change keep their object identity; the same array is returned when nothing
+ * changes at all.
+ */
+const patchEffects = (
+  effects: EffectInstance[],
+  patch: Pick<LayerPatch, 'effectParams' | 'effectEnabled'>,
+): EffectInstance[] => {
+  let changed = false;
+
+  const next = effects.map((effect) => {
+    const paramPatch = patch.effectParams?.[effect.id];
+    const enabledPatch = patch.effectEnabled?.[effect.id];
+    const params = paramPatch ? mergeEffectParams(effect, paramPatch) : effect.params;
+    const enabled = typeof enabledPatch === 'boolean' ? enabledPatch : effect.enabled;
+
+    if (enabled === effect.enabled && isSameParams(params, effect.params)) {
+      return effect;
+    }
+
+    changed = true;
+
+    return { ...effect, params, enabled };
+  });
+
+  return changed ? next : effects;
+};
+
+/** A layer patch resolved into the fields to write onto the layer. */
+export type ResolvedLayerPatch = Omit<
+  LayerPatch,
+  'effectParams' | 'effectEnabled' | 'lookIntensity'
+> & {
+  effects?: EffectInstance[];
+  look?: LayerLook;
 };
 
 /**
  * Turns a requested patch into the exact field values to write onto a layer.
  *
  * Values are clamped to the editor's limits, fields that do not apply to the
- * layer's type are dropped, filters are merged onto the current filters, and
+ * layer's type are dropped, effect edits are merged into the effect stack, and
  * fields whose value would not change are removed. An empty result therefore
  * means the patch is a no-op.
  */
@@ -124,21 +128,29 @@ export const resolveLayerPatch = (
     }
   }
 
-  const current: LayerPatch = layer;
+  const current = layer as unknown as Record<string, unknown>;
+  const resolved = next as Record<string, unknown>;
 
-  (Object.keys(next) as Array<keyof ResolvedLayerPatch>).forEach((key) => {
-    if (Object.is(next[key], current[key])) {
-      delete next[key];
+  Object.keys(resolved).forEach((key) => {
+    if (Object.is(resolved[key], current[key])) {
+      delete resolved[key];
     }
   });
 
-  const filterPatch = sanitizeFilterPatch(patch.filters);
-  const filterChanged = (Object.keys(filterPatch) as Array<keyof FilterSettings>).some(
-    (key) => filterPatch[key] !== layer.filters[key],
-  );
+  if (patch.effectParams || patch.effectEnabled) {
+    const effects = patchEffects(layer.effects ?? [], patch);
 
-  if (filterChanged) {
-    next.filters = { ...layer.filters, ...filterPatch };
+    if (effects !== layer.effects) {
+      next.effects = effects;
+    }
+  }
+
+  if (isFiniteNumber(patch.lookIntensity) && layer.look) {
+    const intensity = clampIntensity(patch.lookIntensity);
+
+    if (intensity !== layer.look.intensity) {
+      next.look = { ...layer.look, intensity };
+    }
   }
 
   return next;
@@ -190,7 +202,7 @@ export const applyLayerPatch = (
 
 /**
  * Combines two patches for the same layer into one, with the later patch
- * winning field by field and filter by filter.
+ * winning field by field, and control by control within each effect.
  */
 export const mergeLayerPatches = (
   earlier: LayerPatch,
@@ -198,8 +210,17 @@ export const mergeLayerPatches = (
 ): LayerPatch => {
   const merged: LayerPatch = { ...earlier, ...later };
 
-  if (earlier.filters || later.filters) {
-    merged.filters = { ...earlier.filters, ...later.filters };
+  if (earlier.effectParams || later.effectParams) {
+    const effectParams = { ...earlier.effectParams };
+
+    Object.entries(later.effectParams ?? {}).forEach(([effectId, params]) => {
+      effectParams[effectId] = { ...effectParams[effectId], ...params };
+    });
+    merged.effectParams = effectParams;
+  }
+
+  if (earlier.effectEnabled || later.effectEnabled) {
+    merged.effectEnabled = { ...earlier.effectEnabled, ...later.effectEnabled };
   }
 
   return merged;

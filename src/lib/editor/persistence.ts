@@ -1,5 +1,5 @@
 import { Project } from '@/types/editor';
-import { createDefaultFilters } from '@/lib/editor/defaults';
+import { normalizeLayerEffects } from '@/lib/effects/stack';
 
 const DATABASE_NAME = 'signal-studio-editor';
 const DATABASE_VERSION = 1;
@@ -143,8 +143,8 @@ export const saveProject = async (
  * media blob was stored.
  *
  * Object URLs from a previous page load are dead, so each asset's `url` is
- * replaced. Layers are back-filled with default values for any filter added
- * since the project was saved.
+ * replaced. Each layer's effect stack is validated, and layers saved with the
+ * older one-number-per-filter model are converted to effect stacks.
  *
  * @returns The saved project, or `null` when there is none, storage is
  * unavailable, or loading failed. Failures are logged, never thrown.
@@ -183,7 +183,6 @@ export const loadProject = async (): Promise<LoadedProject | null> => {
       });
 
       const missingAssetIds: string[] = [];
-      const defaultFilters = createDefaultFilters();
       const saved = stored.project;
       const project: Project = {
         ...saved,
@@ -200,10 +199,7 @@ export const loadProject = async (): Promise<LoadedProject | null> => {
 
           return asset;
         }),
-        layers: saved.layers.map((layer) => ({
-          ...layer,
-          filters: { ...defaultFilters, ...layer.filters },
-        })),
+        layers: saved.layers.map((layer) => normalizeLayerEffects(layer)),
       };
 
       return {

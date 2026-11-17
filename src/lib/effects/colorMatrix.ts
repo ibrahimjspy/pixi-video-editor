@@ -1,4 +1,4 @@
-// Pure colour-matrix maths for the filter pipeline (no PixiJS imports so it can be unit-tested in node).
+// Pure colour-matrix maths for the effect pipeline (no PixiJS imports so it can be unit-tested in node).
 //
 // A matrix is 4 rows x 5 columns in row-major order, the layout PixiJS' ColorMatrixFilter uploads as
 // `uColorMatrix`: each row is [r, g, b, a, offset]. The shader works on un-premultiplied colour in the
@@ -11,16 +11,19 @@ export type ColorMatrix20 = [
   number, number, number, number, number,
 ];
 
-/** The colour-affecting subset of FilterSettings that folds into a single matrix. */
+/** The colour adjustments that fold into a single matrix. */
 export interface ColorAdjustments {
   brightness: number;
   contrast: number;
   saturation: number;
   vibrance: number;
+  /** -1 (cool, blue) to 1 (warm, orange). */
+  temperature: number;
+  /** -1 (green) to 1 (magenta). */
+  tint: number;
   hue: number;
-  grayscale: number;
-  sepia: number;
-  invert: number;
+  /** 0 to 1: lifts the blacks and softens contrast, like faded film. */
+  fade: number;
 }
 
 // Rec. 709 luma weights.
@@ -160,9 +163,57 @@ export const invertMatrix = (amount: number): ColorMatrix20 => {
   ];
 };
 
+/** Multiplies each channel by its own gain (1 = unchanged). */
+export const gainMatrix = (red: number, green: number, blue: number): ColorMatrix20 => [
+  red, 0, 0, 0, 0,
+  0, green, 0, 0, 0,
+  0, 0, blue, 0, 0,
+  0, 0, 0, 1, 0,
+];
+
+/** Warms (amount > 0) or cools (amount < 0) the picture; -1 to 1. */
+export const temperatureMatrix = (amount: number): ColorMatrix20 =>
+  gainMatrix(1 + 0.22 * amount, 1 + 0.02 * amount, 1 - 0.22 * amount);
+
+/** Shifts towards magenta (amount > 0) or green (amount < 0); -1 to 1. */
+export const tintMatrix = (amount: number): ColorMatrix20 =>
+  gainMatrix(1 + 0.08 * amount, 1 - 0.16 * amount, 1 + 0.08 * amount);
+
+/** Lifts blacks and compresses the range, like faded film; 0 to 1. */
+export const fadeMatrix = (amount: number): ColorMatrix20 => {
+  const scale = 1 - 0.28 * amount;
+  const offset = 0.16 * amount;
+
+  return [
+    scale, 0, 0, 0, offset,
+    0, scale, 0, 0, offset,
+    0, 0, scale, 0, offset,
+    0, 0, 0, 1, 0,
+  ];
+};
+
 /**
- * Folds every matrix-expressible colour adjustment into ONE matrix, applied in this order:
- * brightness -> contrast -> saturation -> vibrance -> hue -> grayscale -> sepia -> invert.
+ * Maps brightness onto a two-colour ramp: dark areas take `shadow`, bright
+ * areas take `highlight` (both RGB in 0..1). `amount` blends with the original.
+ */
+export const duotoneMatrix = (
+  shadow: [number, number, number],
+  highlight: [number, number, number],
+  amount: number,
+): ColorMatrix20 => {
+  const row = (channel: number) => {
+    const span = highlight[channel] - shadow[channel];
+
+    return [span * LUMA_R, span * LUMA_G, span * LUMA_B, 0, shadow[channel]];
+  };
+  const full = [...row(0), ...row(1), ...row(2), 0, 0, 0, 1, 0] as ColorMatrix20;
+
+  return lerpMatrices(identityMatrix(), full, clamp(amount, 0, 1));
+};
+
+/**
+ * Folds the basic colour adjustments into ONE matrix, applied in this order:
+ * brightness -> contrast -> saturation -> vibrance -> temperature -> tint -> hue -> fade.
  * Returns null when every adjustment is at its identity value (no filter needed).
  *
  * Vibrance is approximated as an extra saturation multiplier of (1 + vibrance * 0.5); a colour matrix is
@@ -173,10 +224,10 @@ export const buildColorMatrix = (adjustments: ColorAdjustments): ColorMatrix20 |
   const contrast = clamp(adjustments.contrast, 0, 2);
   const saturation = clamp(adjustments.saturation, 0, 2);
   const vibrance = clamp(adjustments.vibrance, -1, 1);
+  const temperature = clamp(adjustments.temperature, -1, 1);
+  const tint = clamp(adjustments.tint, -1, 1);
   const hue = clamp(adjustments.hue, -180, 180);
-  const grayscale = clamp(adjustments.grayscale, 0, 1);
-  const sepia = clamp(adjustments.sepia, 0, 1);
-  const invert = clamp(adjustments.invert, 0, 1);
+  const fade = clamp(adjustments.fade, 0, 1);
 
   let matrix: ColorMatrix20 | null = null;
   const push = (next: ColorMatrix20) => {
@@ -187,10 +238,10 @@ export const buildColorMatrix = (adjustments: ColorAdjustments): ColorMatrix20 |
   if (contrast !== 1) push(contrastMatrix(contrast));
   if (saturation !== 1) push(saturationMatrix(saturation));
   if (vibrance !== 0) push(saturationMatrix(1 + vibrance * VIBRANCE_SATURATION_GAIN));
+  if (temperature !== 0) push(temperatureMatrix(temperature));
+  if (tint !== 0) push(tintMatrix(tint));
   if (hue !== 0) push(hueMatrix(hue));
-  if (grayscale !== 0) push(grayscaleMatrix(grayscale));
-  if (sepia !== 0) push(sepiaMatrix(sepia));
-  if (invert !== 0) push(invertMatrix(invert));
+  if (fade !== 0) push(fadeMatrix(fade));
 
   return matrix;
 };

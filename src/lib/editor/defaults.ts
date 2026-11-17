@@ -2,14 +2,12 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   Asset,
   CanvasAspectRatio,
-  FilterSettings,
   Layer,
   Project,
   ProviderConfig,
   Scene,
   VersionSnapshot,
 } from '@/types/editor';
-import { FILTER_DEFINITIONS } from '@/lib/renderer/filterDefinitions';
 
 export const CANVAS_DIMENSIONS: Record<
   CanvasAspectRatio,
@@ -27,17 +25,6 @@ export const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   provider: 'anthropic',
   apiKey: '',
   model: 'claude-sonnet-5-5',
-};
-
-export const createDefaultFilters = (): FilterSettings => {
-  const filters = {} as FilterSettings;
-
-  FILTER_DEFINITIONS.forEach((filter) => {
-    const key = filter.key as keyof FilterSettings;
-    filters[key] = filter.default as never;
-  });
-
-  return filters;
 };
 
 export const createDefaultScene = (

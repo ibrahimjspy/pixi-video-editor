@@ -43,7 +43,7 @@ const TransformSection = ({ layerId }: TransformSectionProps) => {
     height: entry.height,
     rotation: entry.rotation,
     opacity: entry.opacity,
-    assetId: entry.type === 'text' ? null : entry.assetId,
+    assetId: entry.type === 'image' || entry.type === 'video' ? entry.assetId : null,
   }));
   const transientFrame = useEditorStore(
     (state): LayerFrame | undefined => state.transientFrameByLayerId[layerId],

@@ -2,7 +2,7 @@
 
 import { useEditorStore } from '@/store/editorStore';
 import CanvasSection from '@/components/inspector/CanvasSection';
-import FilterSection from '@/components/inspector/FilterSection';
+import EffectsSection from '@/components/inspector/effects/EffectsSection';
 import LayerSection from '@/components/inspector/LayerSection';
 import TextSection from '@/components/inspector/TextSection';
 import TimingSection from '@/components/inspector/TimingSection';
@@ -31,8 +31,8 @@ const Inspector = () => {
       <div className="signal-inspector">
         <CanvasSection />
         <p className="signal-empty signal-inspector__hint">
-          Select a layer on the canvas or in the Layers list to edit its transform, text, and
-          filters. Upload media or use Quick add to create one.
+          Select a layer on the canvas or in the Layers list to edit its transform, text, look
+          and effects. Upload media or use Quick add to create one.
         </p>
       </div>
     );
@@ -41,11 +41,13 @@ const Inspector = () => {
   return (
     <div className="signal-inspector">
       <LayerSection key={`layer-${layerId}`} layerId={layerId} />
-      <TransformSection key={`transform-${layerId}`} layerId={layerId} />
+      {layerType !== 'adjustment' && (
+        <TransformSection key={`transform-${layerId}`} layerId={layerId} />
+      )}
       {layerType === 'text' && <TextSection key={`text-${layerId}`} layerId={layerId} />}
       <TimingSection key={`timing-${layerId}`} layerId={layerId} />
       {layerType === 'video' && <VideoSection key={`video-${layerId}`} layerId={layerId} />}
-      <FilterSection key={`filters-${layerId}`} layerId={layerId} />
+      <EffectsSection key={`effects-${layerId}`} layerId={layerId} />
       <CanvasSection defaultOpen={false} />
     </div>
   );

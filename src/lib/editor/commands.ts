@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import {
+  AdjustmentLayer,
   Command,
   CommandRecord,
   Layer,
@@ -11,14 +12,15 @@ import {
 } from '@/types/editor';
 import {
   CANVAS_DIMENSIONS,
-  createDefaultFilters,
   createVersionSnapshot,
   getAssetById,
   getCurrentScene,
   getLayerById,
   MIN_LAYER_SIZE,
 } from '@/lib/editor/defaults';
-import { FILTER_PRESETS } from '@/lib/editor/filterPresets';
+import { getEffectDefinition } from '@/lib/effects/registry';
+import { getLookDefinition } from '@/lib/effects/looks';
+import { clampIntensity, cloneEffects, createEffect } from '@/lib/effects/stack';
 import {
   canSplitSpanAt,
   getProjectLayerSpan,
@@ -26,7 +28,6 @@ import {
   MIN_CLIP_MS,
 } from '@/lib/editor/timeline';
 import {
-  isFilterKey,
   MIN_TRIM_DURATION_MS,
   patchLayerInPlace,
 } from '@/lib/editor/layerPatch';
@@ -208,7 +209,8 @@ const buildLayerFromAsset = (
     zIndex: scene.layerIds.length,
     visible: true,
     muted: false,
-    filters: createDefaultFilters(),
+    effects: [],
+    look: null,
     opacity: 1,
   };
   const baseName = asset.name.replace(/\.[^.]+$/, '');
@@ -257,7 +259,8 @@ const buildTextLayer = (
     zIndex: scene.layerIds.length,
     visible: true,
     muted: false,
-    filters: createDefaultFilters(),
+    effects: [],
+    look: null,
     opacity: 1,
     align: 'center' as const,
     startMs: 0,
@@ -312,6 +315,14 @@ const resizeSceneCanvas = (
 
   project.layers.forEach((layer) => {
     if (!sceneLayerIds.has(layer.id)) {
+      return;
+    }
+
+    if (layer.type === 'adjustment') {
+      layer.x = 0;
+      layer.y = 0;
+      layer.width = width;
+      layer.height = height;
       return;
     }
 
@@ -478,55 +489,218 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
 
       return done(`Reordered ${layer.name}`, { snapshotLabel: 'Reorder layers' });
     }
-    case 'apply_filter_preset': {
+    case 'add_effect': {
       const layer = getLayerById(project, command.layerId);
 
       if (!layer) {
         return fail(LAYER_NOT_FOUND);
       }
 
-      layer.filters = {
-        ...createDefaultFilters(),
-        ...FILTER_PRESETS[command.preset],
+      const effect = createEffect(command.effect, command.params);
+      const definition = getEffectDefinition(command.effect);
+
+      if (!effect || !definition) {
+        return fail(`Unknown effect: ${command.effect}`);
+      }
+
+      const index = Math.max(
+        0,
+        Math.min(command.index ?? layer.effects.length, layer.effects.length),
+      );
+      layer.effects.splice(index, 0, effect);
+
+      return done(`Added ${definition.label} to ${layer.name}`, {
+        snapshotLabel: `${definition.label} on ${layer.name}`,
+      });
+    }
+    case 'update_effect': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      const effect = layer.effects.find((entry) => entry.id === command.effectId);
+
+      if (!effect) {
+        return fail('Effect not found on this layer');
+      }
+
+      const label = getEffectDefinition(effect.type)?.label ?? effect.type;
+      const changed = patchLayerInPlace(layer, {
+        effectParams: command.params ? { [effect.id]: command.params } : undefined,
+        effectEnabled:
+          typeof command.enabled === 'boolean' ? { [effect.id]: command.enabled } : undefined,
+      });
+
+      if (!changed) {
+        return done(`${label} on ${layer.name} is already set`, { mutated: false });
+      }
+
+      return done(`Updated ${label} on ${layer.name}`, {
+        snapshotLabel: `${label} on ${layer.name}`,
+      });
+    }
+    case 'remove_effect': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      const effect = layer.effects.find((entry) => entry.id === command.effectId);
+
+      if (!effect) {
+        return fail('Effect not found on this layer');
+      }
+
+      const label = getEffectDefinition(effect.type)?.label ?? effect.type;
+      layer.effects = layer.effects.filter((entry) => entry.id !== command.effectId);
+
+      return done(`Removed ${label} from ${layer.name}`, {
+        snapshotLabel: `Remove ${label}`,
+      });
+    }
+    case 'reorder_effect': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      const fromIndex = layer.effects.findIndex((entry) => entry.id === command.effectId);
+
+      if (fromIndex === -1) {
+        return fail('Effect not found on this layer');
+      }
+
+      const toIndex = Math.max(0, Math.min(command.toIndex, layer.effects.length - 1));
+
+      if (toIndex === fromIndex) {
+        return done('Effect is already in that position', { mutated: false });
+      }
+
+      const [effect] = layer.effects.splice(fromIndex, 1);
+      layer.effects.splice(toIndex, 0, effect);
+
+      return done(`Reordered effects on ${layer.name}`, { snapshotLabel: 'Reorder effects' });
+    }
+    case 'set_effects': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      const unknown = command.effects.find((entry) => !getEffectDefinition(entry.type));
+
+      if (unknown) {
+        return fail(`Unknown effect: ${unknown.type}`);
+      }
+
+      if (command.look && !getLookDefinition(command.look.id)) {
+        return fail(`Unknown look: ${command.look.id}`);
+      }
+
+      layer.effects = command.effects.flatMap((entry) => {
+        const effect = createEffect(entry.type, entry.params, entry.enabled !== false);
+
+        return effect ? [effect] : [];
+      });
+
+      if (command.look !== undefined) {
+        layer.look = command.look
+          ? { id: command.look.id, intensity: clampIntensity(command.look.intensity) }
+          : null;
+      }
+
+      return done(`Set effects on ${layer.name}`, {
+        snapshotLabel: `Effects on ${layer.name}`,
+      });
+    }
+    case 'clear_effects': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      if (layer.effects.length === 0 && !layer.look) {
+        return done(`${layer.name} has no effects`, { mutated: false });
+      }
+
+      layer.effects = [];
+      layer.look = null;
+
+      return done(`Cleared effects on ${layer.name}`, {
+        snapshotLabel: `Clear effects ${layer.name}`,
+      });
+    }
+    case 'set_look': {
+      const layer = getLayerById(project, command.layerId);
+
+      if (!layer) {
+        return fail(LAYER_NOT_FOUND);
+      }
+
+      if (command.look === null) {
+        if (!layer.look) {
+          return done(`${layer.name} has no look`, { mutated: false });
+        }
+
+        layer.look = null;
+
+        return done(`Removed the look from ${layer.name}`, { snapshotLabel: 'Remove look' });
+      }
+
+      const definition = getLookDefinition(command.look);
+
+      if (!definition) {
+        return fail(`Unknown look: ${command.look}`);
+      }
+
+      const intensity = clampIntensity(
+        command.intensity ?? (layer.look ? layer.look.intensity : 1),
+      );
+
+      if (layer.look?.id === definition.id && layer.look.intensity === intensity) {
+        return done(`${layer.name} already has the ${definition.label} look`, { mutated: false });
+      }
+
+      layer.look = { id: definition.id, intensity };
+
+      return done(`Applied the ${definition.label} look to ${layer.name}`, {
+        snapshotLabel: `${definition.label} look`,
+      });
+    }
+    case 'add_adjustment_layer': {
+      const timelineMs = defaultClipDurationMs(project);
+      const startMs = Math.max(0, command.startMs ?? 0);
+      const layer: AdjustmentLayer = {
+        id: uuidv4(),
+        type: 'adjustment',
+        name: command.name?.trim() || 'Adjustment layer',
+        x: 0,
+        y: 0,
+        width: scene.canvasWidth,
+        height: scene.canvasHeight,
+        rotation: 0,
+        zIndex: scene.layerIds.length,
+        visible: true,
+        muted: false,
+        effects: [],
+        look: null,
+        opacity: 1,
+        startMs,
+        durationMs: Math.max(
+          MIN_CLIP_MS,
+          command.durationMs ?? Math.max(MIN_CLIP_MS, timelineMs - startMs),
+        ),
       };
 
-      return done(`Applied ${command.preset} preset to ${layer.name}`, {
-        snapshotLabel: `${command.preset} preset`,
-      });
-    }
-    case 'set_filters': {
-      const layer = getLayerById(project, command.layerId);
+      insertLayer(project, scene, layer);
 
-      if (!layer) {
-        return fail(LAYER_NOT_FOUND);
-      }
-
-      const unknownKey = Object.keys(command.filters).find((key) => !isFilterKey(key));
-
-      if (unknownKey) {
-        return fail(`Unknown filter: ${unknownKey}`);
-      }
-
-      if (!patchLayerInPlace(layer, { filters: command.filters })) {
-        return done(`Filters on ${layer.name} are already set`, { mutated: false });
-      }
-
-      return done(`Updated filters on ${layer.name}`, {
-        snapshotLabel: `Filters ${layer.name}`,
-      });
-    }
-    case 'reset_filters': {
-      const layer = getLayerById(project, command.layerId);
-
-      if (!layer) {
-        return fail(LAYER_NOT_FOUND);
-      }
-
-      layer.filters = createDefaultFilters();
-
-      return done(`Reset filters on ${layer.name}`, {
-        snapshotLabel: `Reset filters ${layer.name}`,
-      });
+      return done(`Added ${layer.name}`, { snapshotLabel: 'Add adjustment layer' });
     }
     case 'set_style_params': {
       const layer = getLayerById(project, command.layerId);
@@ -679,12 +853,14 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
       const sourceScene =
         project.scenes.find((entry) => entry.layerIds.includes(layer.id)) ?? scene;
       const sourceIndex = sourceScene.layerIds.indexOf(layer.id);
+      const offset = layer.type === 'adjustment' ? 0 : 24;
       const copy: Layer = {
         ...structuredClone(layer),
         id: uuidv4(),
         name: `${layer.name} copy`,
-        x: layer.x + 24,
-        y: layer.y + 24,
+        x: layer.x + offset,
+        y: layer.y + offset,
+        effects: cloneEffects(layer.effects),
       };
 
       insertLayer(
@@ -763,6 +939,7 @@ const runCommand = (project: Project, command: MutatingCommand): HandlerResult =
         id: uuidv4(),
         startMs: atMs,
         durationMs: span.endMs - atMs,
+        effects: cloneEffects(layer.effects),
       };
 
       layer.durationMs = atMs - span.startMs;

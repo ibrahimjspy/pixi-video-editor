@@ -13,6 +13,7 @@ import {
   requestPlanFromProvider,
 } from '@/lib/ai/providerAdapters';
 import { isSupportedCommand } from '@/lib/editor/commandValidation';
+import { LOOK_DEFINITIONS } from '@/lib/effects/looks';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -312,7 +313,8 @@ export const buildHeuristicPlan = (
   }
 
   if (target) {
-    const preset = has('noir')
+    // The first look whose name or id appears in the request.
+    const keywordLook = has('noir')
       ? 'noir'
       : has('vibrant')
         ? 'vibrant'
@@ -321,14 +323,21 @@ export const buildHeuristicPlan = (
           : has('clean')
             ? 'clean'
             : null;
+    const look =
+      LOOK_DEFINITIONS.find((entry) => entry.id === keywordLook) ??
+      LOOK_DEFINITIONS.find(
+        (entry) =>
+          normalized.includes(entry.label.toLowerCase()) ||
+          normalized.includes(entry.id.replace(/-/g, ' ')),
+      );
 
-    if (preset) {
+    if (look) {
       actions.push(
         makeAction(
-          'apply_filter_preset',
-          `Apply ${preset} preset`,
-          `The request asks for a ${preset} look on "${target.name}".`,
-          { type: 'apply_filter_preset', layerId: target.id, preset },
+          'set_look',
+          `Apply ${look.label} look`,
+          `The request asks for a ${look.label} look on "${target.name}".`,
+          { type: 'set_look', layerId: target.id, look: look.id },
         ),
       );
     }

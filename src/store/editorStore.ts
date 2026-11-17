@@ -116,8 +116,8 @@ interface ProjectStore {
    *
    * The first call of a gesture remembers the pre-edit project; later calls
    * keep updating `project` only. History, versions, and the command log are
-   * untouched until `commitLayerPatch`. `patch.filters` is merged onto the
-   * layer's filters, and values are clamped exactly as the commands clamp
+   * untouched until `commitLayerPatch`. `patch.effectParams` is merged onto the
+   * matching effects, and values are clamped exactly as the commands clamp
    * them. Previewing a different layer commits the open gesture first.
    *
    * Typical wiring: `onInput` -> `previewLayerPatch`, then `onPointerUp`,
@@ -125,7 +125,7 @@ interface ProjectStore {
    * `cancelLayerPatch`.
    *
    * @example
-   * previewLayerPatch(layer.id, { filters: { blur: 0.4 } });
+   * previewLayerPatch(layer.id, { effectParams: { [effect.id]: { strength: 12 } } });
    * previewLayerPatch(layer.id, { opacity: 0.5 });
    */
   previewLayerPatch: (layerId: string, patch: LayerPatch) => void;
@@ -220,7 +220,7 @@ const pushRecords = (
     ? [...[...records].reverse(), ...commandLog].slice(0, COMMAND_LOG_LIMIT)
     : commandLog;
 
-/** Compares two versions of a layer field by field, and filter by filter. */
+/** Compares two versions of a layer field by field; effects and look by content. */
 const isSameLayer = (a: Layer | undefined, b: Layer | undefined): boolean => {
   if (a === b) {
     return true;
@@ -230,19 +230,26 @@ const isSameLayer = (a: Layer | undefined, b: Layer | undefined): boolean => {
     return false;
   }
 
-  const left: LayerPatch = a;
-  const right: LayerPatch = b;
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof LayerPatch>;
+  const left = a as unknown as Record<string, unknown>;
+  const right = b as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
 
   for (const key of keys) {
-    if (key !== 'filters' && !Object.is(left[key], right[key])) {
-      return false;
+    if (Object.is(left[key], right[key])) {
+      continue;
     }
+
+    if (
+      (key === 'effects' || key === 'look') &&
+      JSON.stringify(left[key] ?? null) === JSON.stringify(right[key] ?? null)
+    ) {
+      continue;
+    }
+
+    return false;
   }
 
-  return (Object.keys(b.filters) as Array<keyof Layer['filters']>).every(
-    (key) => a.filters[key] === b.filters[key],
-  );
+  return true;
 };
 
 const copyPatchField = <K extends keyof LayerPatch>(
@@ -261,19 +268,34 @@ const copyPatchField = <K extends keyof LayerPatch>(
 const finalisePatch = (patch: LayerPatch, layer: Layer): LayerPatch => {
   const applied: LayerPatch = {};
   const current: LayerPatch = layer;
+  const effectsById = new Map((layer.effects ?? []).map((effect) => [effect.id, effect]));
 
   (Object.keys(patch) as Array<keyof LayerPatch>).forEach((key) => {
-    if (key === 'filters') {
-      const filters: NonNullable<LayerPatch['filters']> = {};
+    if (key === 'effectParams') {
+      const effectParams: NonNullable<LayerPatch['effectParams']> = {};
 
-      (Object.keys(patch.filters ?? {}) as Array<keyof Layer['filters']>).forEach(
-        (filterKey) => {
-          if (filterKey in layer.filters) {
-            filters[filterKey] = layer.filters[filterKey];
-          }
-        },
+      Object.entries(patch.effectParams ?? {}).forEach(([effectId, params]) => {
+        const effect = effectsById.get(effectId);
+
+        if (effect) {
+          effectParams[effectId] = Object.fromEntries(
+            Object.keys(params)
+              .filter((paramKey) => paramKey in effect.params)
+              .map((paramKey) => [paramKey, effect.params[paramKey]]),
+          );
+        }
+      });
+      applied.effectParams = effectParams;
+    } else if (key === 'effectEnabled') {
+      applied.effectEnabled = Object.fromEntries(
+        Object.keys(patch.effectEnabled ?? {})
+          .filter((effectId) => effectsById.has(effectId))
+          .map((effectId) => [effectId, effectsById.get(effectId)!.enabled]),
       );
-      applied.filters = filters;
+    } else if (key === 'lookIntensity') {
+      if (layer.look) {
+        applied.lookIntensity = layer.look.intensity;
+      }
     } else if (key in layer) {
       copyPatchField(applied, current, key);
     }

@@ -1,6 +1,7 @@
+import { EFFECT_DEFINITIONS, getChangedParams, getEffectDefinition } from '@/lib/effects/registry';
+import { LOOK_DEFINITIONS } from '@/lib/effects/looks';
 import { Project, ProviderConfig } from '@/types/editor';
 import {
-  createDefaultFilters,
   getAssetById,
   getCurrentLayers,
   getCurrentScene,
@@ -46,7 +47,11 @@ const PAYLOAD_NOTES: Record<string, string> = {
   set_canvas_ratio: 'aspectRatio must be one of "16:9", "9:16", "1:1".',
   trim_clip: 'Only for layers whose type is "video". Times are milliseconds; trimEndMs may be null for "until the end".',
   reorder_layer: 'toIndex is the 0-based position in the layer list, where 0 is the bottom-most layer.',
-  apply_filter_preset: 'preset must be one of "clean", "cinematic", "vibrant", "noir", "spotlight".',
+  set_look: 'look must be a look id from the "Looks" list below, or null to remove the look. intensity is 0 to 1 and optional.',
+  add_effect: 'effect must be an effect type from the "Effects" list below; params may only use that effect\'s controls.',
+  update_effect: 'Provide "params" and/or "enabled". params may only use the controls of that effect\'s type.',
+  set_effects: 'Each entry needs a "type" from the "Effects" list; "params" and "enabled" are optional. "look" is optional: omit it to keep the current look, null to remove it.',
+  add_adjustment_layer: 'All fields are optional. It is added above every existing layer and has no id until the plan is applied, so target it in a later request.',
   set_style_params:
     'params may contain opacity (0-1), rotation, and for text layers color (hex), fontSize, fontFamily. Omit params you do not change.',
   apply_animation_preset: 'preset must be one of "drift-in", "punch-zoom", "soft-fade".',
@@ -301,12 +306,11 @@ const round = (value: unknown) =>
  * Builds the compact project description sent to the model.
  *
  * Only the active scene is described. Asset URLs (blob: URLs), timestamps and
- * default filter values are deliberately left out.
+ * effect controls left at their defaults are deliberately left out.
  */
 export const summarizeProject = (project: Project) => {
   const scene = getCurrentScene(project);
   const layers = getCurrentLayers(project);
-  const defaultFilters = createDefaultFilters() as unknown as Record<string, unknown>;
   const selectedLayerId = project.selection?.layerId ?? null;
 
   return {
@@ -350,7 +354,7 @@ export const summarizeProject = (project: Project) => {
         summary.fontFamily = layer.fontFamily;
         summary.color = layer.color;
         summary.align = layer.align;
-      } else {
+      } else if (layer.type === 'image' || layer.type === 'video') {
         const asset = getAssetById(project, layer.assetId);
 
         if (asset) {
@@ -367,18 +371,55 @@ export const summarizeProject = (project: Project) => {
         }
       }
 
-      const filters = Object.entries((layer.filters ?? {}) as unknown as Record<string, unknown>).filter(
-        ([key, value]) => typeof value === 'number' && value !== defaultFilters[key],
-      );
+      if (layer.look) {
+        summary.look = { id: layer.look.id, intensity: round(layer.look.intensity) };
+      }
 
-      if (filters.length > 0) {
-        summary.filters = Object.fromEntries(filters.map(([key, value]) => [key, round(value)]));
+      if (layer.effects.length > 0) {
+        /** In stack order; the first effect is applied first. */
+        summary.effects = layer.effects.map((effect) => {
+          const definition = getEffectDefinition(effect.type);
+          const changed = definition ? getChangedParams(definition, effect.params) : {};
+
+          return {
+            id: effect.id,
+            type: effect.type,
+            ...(effect.enabled ? {} : { enabled: false }),
+            ...(Object.keys(changed).length > 0
+              ? { params: Object.fromEntries(Object.entries(changed).map(([key, value]) => [key, round(value)])) }
+              : {}),
+          };
+        });
       }
 
       return summary;
     }),
   };
 };
+
+/** One line per effect: its type id, what it does, and each control with its range. */
+const describeEffectCatalogue = () =>
+  EFFECT_DEFINITIONS.map((definition) => {
+    const controls = definition.params.map((param) => {
+      switch (param.kind) {
+        case 'number':
+          return `${param.key} (${param.min} to ${param.max}, default ${param.default})`;
+        case 'color':
+          return `${param.key} (hex colour, default ${param.default})`;
+        case 'boolean':
+          return `${param.key} (true/false, default ${param.default})`;
+        case 'select':
+          return `${param.key} (${param.options.map((option) => `"${option.value}"`).join(' | ')})`;
+      }
+    });
+
+    return `- ${definition.type} [${definition.category}]: ${definition.description}${
+      controls.length > 0 ? ` Controls: ${controls.join(', ')}.` : ' No controls.'
+    }`;
+  }).join('\n');
+
+const describeLookCatalogue = () =>
+  LOOK_DEFINITIONS.map((look) => `- ${look.id} [${look.category}]: ${look.description}`).join('\n');
 
 /** Returns the contracts the model is allowed to plan with, read at call time. */
 export const getPlannableContracts = () =>
@@ -421,6 +462,14 @@ export const buildSystemPrompt = (project: Project) => {
     '## Commands',
     commandList,
     '',
+    '## Looks',
+    'Ready-made colour treatments for set_look. Prefer a look when the request is about overall mood or grade.',
+    describeLookCatalogue(),
+    '',
+    '## Effects',
+    'Effect types for add_effect and set_effects. Use only the listed controls; values outside a range are clamped. Centre controls are fractions of the layer (0.5 is the middle). Angles are degrees.',
+    describeEffectCatalogue(),
+    '',
     '## Rules',
     `- Never plan these commands, they are reserved for the user: ${blocked}.`,
     '- Every "layerId" must be an "id" copied from the layers in the provided project. The ids in the payload examples are placeholders. Layers created earlier in the same plan have no id yet, so do not reference them.',
@@ -428,6 +477,7 @@ export const buildSystemPrompt = (project: Project) => {
     `- Coordinates and sizes are canvas pixels. The canvas is ${scene.canvasWidth} x ${scene.canvasHeight} (${scene.aspectRatio}); x and y are measured from its top-left corner. Keep layers inside the canvas unless the request says otherwise.`,
     '- If you change the canvas ratio, later coordinates in the same plan refer to the new canvas size.',
     '- Mark an action "destructive": true when it removes content.',
+    '- Layers of type "adjustment" have no picture: their look and effects apply to every layer beneath them. To treat the whole video, target an existing adjustment layer if there is one.',
     '- Plan only what the request asks for. Do not add extra polish steps.',
   ].join('\n');
 };

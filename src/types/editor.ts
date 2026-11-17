@@ -1,47 +1,29 @@
 export type AssetKind = 'image' | 'video';
 
-export type LayerType = AssetKind | 'text';
+export type LayerType = AssetKind | 'text' | 'adjustment';
 
 export type CanvasAspectRatio = '16:9' | '9:16' | '1:1';
 
-export interface FilterSettings {
-  brightness: number;
-  contrast: number;
-  saturation: number;
-  hue: number;
-  vibrance: number;
-  gamma: number;
-  sepia: number;
-  grayscale: number;
-  invert: number;
-  blur: number;
-  sharpness: number;
-  kawaseBlur: number;
-  zoomBlur: number;
-  tiltShift: number;
-  bulgePinch: number;
-  twist: number;
-  shockwave: number;
-  displacement: number;
-  glow: number;
-  outline: number;
-  dropShadow: number;
-  bevel: number;
-  emboss: number;
-  pixelate: number;
-  dot: number;
-  crossHatch: number;
-  crt: number;
-  oldFilm: number;
-  ascii: number;
-  noise: number;
-  bloom: number;
-  godray: number;
-  reflection: number;
-  waterReflection: number;
-  rgbSplit: number;
-  colorReplace: number;
-  multiColorReplace: number;
+/** A single value of an effect control: a number, a colour or option, or a switch. */
+export type EffectParamValue = number | string | boolean;
+
+export type EffectParams = Record<string, EffectParamValue>;
+
+/**
+ * One effect in a layer's stack. `type` names an entry of the effect registry
+ * (`src/lib/effects/registry.ts`); `params` holds that effect's controls.
+ */
+export interface EffectInstance {
+  id: string;
+  type: string;
+  enabled: boolean;
+  params: EffectParams;
+}
+
+/** A named look from the look library, blended in at `intensity` (0 to 1). */
+export interface LayerLook {
+  id: string;
+  intensity: number;
 }
 
 export interface Asset {
@@ -71,7 +53,10 @@ export interface BaseLayer extends LayerFrame {
   zIndex: number;
   visible: boolean;
   muted: boolean;
-  filters: FilterSettings;
+  /** Effects applied in order, after the look. */
+  effects: EffectInstance[];
+  /** Colour look applied before the effect stack. */
+  look?: LayerLook | null;
   opacity: number;
   blendMode?: string;
   animationPreset?: string | null;
@@ -109,22 +94,27 @@ export interface TextLayer extends BaseLayer {
   align: 'left' | 'center' | 'right';
 }
 
-export type Layer = ImageLayer | VideoLayer | TextLayer;
+/**
+ * A layer with no picture of its own: its look and effects are applied to
+ * everything beneath it, for as long as it lasts on the timeline.
+ */
+export interface AdjustmentLayer extends BaseLayer {
+  type: 'adjustment';
+}
 
-export type FilterPresetName =
-  | 'clean'
-  | 'cinematic'
-  | 'vibrant'
-  | 'noir'
-  | 'spotlight';
+export type Layer = ImageLayer | VideoLayer | TextLayer | AdjustmentLayer;
+
+/** A layer that shows an imported image or video. */
+export type MediaLayer = ImageLayer | VideoLayer;
 
 /**
  * A partial edit to one layer.
  *
  * Identity and ordering fields (`id`, `type`, `zIndex`, `assetId`) are
- * deliberately absent. `filters` is merged onto the layer's current filters
- * instead of replacing them. Text-only and video-only fields are ignored when
- * the target layer is of another type.
+ * deliberately absent. `effectParams` and `effectEnabled` are keyed by effect
+ * id and merged onto the matching effects in the layer's stack; ids that are
+ * not in the stack are ignored. Text-only and video-only fields are ignored
+ * when the target layer is of another type.
  */
 export type LayerPatch = Partial<LayerFrame> &
   Partial<
@@ -142,7 +132,9 @@ export type LayerPatch = Partial<LayerFrame> &
   > &
   Partial<Pick<TextLayer, 'text' | 'fontSize' | 'fontFamily' | 'color' | 'align'>> &
   Partial<Pick<VideoLayer, 'trimStartMs' | 'trimEndMs' | 'volume'>> & {
-    filters?: Partial<FilterSettings>;
+    effectParams?: Record<string, EffectParams>;
+    effectEnabled?: Record<string, boolean>;
+    lookIntensity?: number;
   };
 
 export interface Scene {
@@ -292,11 +284,6 @@ export type Command =
       toIndex: number;
     }
   | {
-      type: 'apply_filter_preset';
-      layerId: string;
-      preset: FilterPresetName;
-    }
-  | {
       type: 'set_style_params';
       layerId: string;
       params: Partial<
@@ -351,14 +338,61 @@ export type Command =
       rotation?: number;
     }
   | {
-      /** Merges individual filter values onto the layer's current filters. */
-      type: 'set_filters';
+      /** Adds an effect to a layer's stack. `effect` is a registry type id. */
+      type: 'add_effect';
       layerId: string;
-      filters: Partial<FilterSettings>;
+      effect: string;
+      params?: EffectParams;
+      /** Position in the stack. Defaults to the end (applied last). */
+      index?: number;
     }
   | {
-      type: 'reset_filters';
+      /** Changes controls of one effect, and/or switches it on or off. */
+      type: 'update_effect';
       layerId: string;
+      effectId: string;
+      params?: EffectParams;
+      enabled?: boolean;
+    }
+  | {
+      type: 'remove_effect';
+      layerId: string;
+      effectId: string;
+    }
+  | {
+      type: 'reorder_effect';
+      layerId: string;
+      effectId: string;
+      toIndex: number;
+    }
+  | {
+      /**
+       * Replaces a layer's whole effect stack, and its look when `look` is
+       * given. Used to paste effects from another layer.
+       */
+      type: 'set_effects';
+      layerId: string;
+      effects: Array<{ type: string; params?: EffectParams; enabled?: boolean }>;
+      look?: { id: string; intensity?: number } | null;
+    }
+  | {
+      /** Removes every effect and the look from a layer. */
+      type: 'clear_effects';
+      layerId: string;
+    }
+  | {
+      /** Sets or removes (`look: null`) a layer's look. */
+      type: 'set_look';
+      layerId: string;
+      look: string | null;
+      intensity?: number;
+    }
+  | {
+      /** Adds a layer whose effects apply to everything beneath it. */
+      type: 'add_adjustment_layer';
+      name?: string;
+      startMs?: number;
+      durationMs?: number;
     }
   | {
       /** Edits the content or typography of a text layer. */

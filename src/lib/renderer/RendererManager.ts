@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { Asset, Layer, LayerFrame, LayerType, Scene } from '@/types/editor';
+import { AdjustmentLayer, Asset, EffectInstance, Layer, LayerFrame, LayerType, Scene } from '@/types/editor';
 import { loadImageSprite } from '@/lib/renderer/imageProcessor';
 import { createTextDisplay, updateTextDisplay } from '@/lib/renderer/textProcessor';
 import {
@@ -7,7 +7,7 @@ import {
   releaseVideoElement,
   VideoDriver,
 } from '@/lib/renderer/videoProcessor';
-import { applyFilters, clearFilterCache } from '@/lib/renderer/filters';
+import { applyEffects, clearEffectCache, hasTimedEffects } from '@/lib/renderer/effects';
 import { InteractionController, LayerDisplay } from '@/lib/renderer/interactivity';
 import {
   getLayerSpan,
@@ -55,18 +55,26 @@ const VIDEO_KEEP_MS = 1500;
 /** How far a playing video may drift from the playhead before it is re-seeked. */
 const VIDEO_DRIFT_S = 0.25;
 
+/** Canvas colour behind every layer. Exports clear to the same colour. */
+export const STAGE_BACKGROUND_COLOR = 0x0e1318;
+
+/** Stable empty stack, so an inactive adjustment layer compares equal frame to frame. */
+const NO_EFFECTS: readonly EffectInstance[] = [];
+
 /**
  * Applies a layer's state to its display object. Used for both creation and
  * updates so every property (including rotation) is handled in one place.
  *
  * `frame` defaults to the layer itself; a drag passes its in-flight frame.
- * `active` is whether the playhead is inside the layer's time span.
+ * `active` is whether the playhead is inside the layer's time span, and
+ * `timeMs` is the playhead position, which moving effects read.
  */
 export const applyLayerState = (
   display: LayerDisplay,
   layer: Layer,
   frame: LayerFrame = layer,
   active: boolean = true,
+  timeMs: number = 0,
 ) => {
   display.label = layer.id;
   display.position.set(frame.x, frame.y);
@@ -84,7 +92,7 @@ export const applyLayerState = (
     display.height = frame.height;
   }
 
-  applyFilters(display, layer.filters);
+  applyEffects(display, layer.look, layer.effects, { timeMs });
 };
 
 /**
@@ -99,6 +107,10 @@ export const applyLayerState = (
  * drives each video element (play, pause, seek, volume). Video elements are
  * created only shortly before they are needed, so a project cut into many
  * pieces of one large file never holds many decoders at once.
+ *
+ * Adjustment layers have no display object. Each one owns a group container
+ * that holds everything beneath it, and the layer's effects are applied to
+ * that group, so they colour the combined picture rather than single layers.
  */
 export class RendererManager {
   private readonly app: PIXI.Application;
@@ -107,6 +119,10 @@ export class RendererManager {
   private readonly pending = new Map<string, PendingLoad>();
   /** Layer id -> asset URL that failed, so a broken asset is not retried every render. */
   private readonly failed = new Map<string, string>();
+  /** Adjustment layer id -> the container holding everything beneath it. */
+  private readonly groups = new Map<string, PIXI.Container>();
+  /** Solid canvas colour, so adjustment layers also affect empty areas. */
+  private readonly backdrop = new PIXI.Graphics();
   private layersById = new Map<string, Layer>();
   private assets = new Map<string, Asset>();
   private sceneDurationMs = 0;
@@ -121,6 +137,10 @@ export class RendererManager {
 
   constructor(app: PIXI.Application) {
     this.app = app;
+    this.backdrop.label = 'backdrop';
+    this.backdrop.zIndex = -1;
+    this.backdrop.eventMode = 'none';
+    app.stage.addChild(this.backdrop);
     this.interaction = new InteractionController(app, {
       getLayer: (layerId) => this.layersById.get(layerId),
       getDisplay: (layerId) => this.records.get(layerId)?.display,
@@ -129,7 +149,7 @@ export class RendererManager {
         const layer = this.layersById.get(layerId);
 
         if (record && layer) {
-          applyLayerState(record.display, layer, frame, this.isActive(layer));
+          applyLayerState(record.display, layer, frame, this.isActive(layer), this.displayTime());
         }
       },
       onSelect: (layerId) => this.onLayerSelect(layerId),
@@ -159,6 +179,11 @@ export class RendererManager {
     ) {
       this.app.renderer.resize(request.scene.canvasWidth, request.scene.canvasHeight);
     }
+
+    this.backdrop
+      .clear()
+      .rect(0, 0, request.scene.canvasWidth, request.scene.canvasHeight)
+      .fill({ color: STAGE_BACKGROUND_COLOR });
 
     this.reconcile();
   }
@@ -201,8 +226,15 @@ export class RendererManager {
         visibilityChanged = true;
       }
 
+      // Effects that move (grain, glitch, light rays...) follow the playhead.
+      if (visible && hasTimedEffects(record.display)) {
+        applyEffects(record.display, layer.look, layer.effects, { timeMs: this.displayTime() });
+      }
+
       this.driveVideo(record, layer);
     }
+
+    this.syncGroupEffects();
 
     if (visibilityChanged) {
       this.interaction.refresh();
@@ -309,6 +341,79 @@ export class RendererManager {
   }
 
   /**
+   * Draws a small copy of what a layer shows right now, without its look or
+   * effects, for previewing looks. Image and video layers give their source
+   * frame; other layers give the whole canvas (for an adjustment layer,
+   * without that layer's own treatment).
+   *
+   * @returns A canvas `maxWidth` wide, or null when nothing can be drawn yet.
+   */
+  captureLayerSource(layerId: string, maxWidth: number): HTMLCanvasElement | null {
+    const layer = this.layersById.get(layerId);
+
+    if (this.destroyed || this.exporting || !layer || !this.request) {
+      return null;
+    }
+
+    const record = this.records.get(layerId);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      return null;
+    }
+
+    if (record && record.display instanceof PIXI.Sprite) {
+      const source = record.video ?? (record.display.texture.source.resource as CanvasImageSource);
+      const aspect = layer.width > 0 && layer.height > 0 ? layer.height / layer.width : 9 / 16;
+
+      canvas.width = maxWidth;
+      canvas.height = Math.max(1, Math.round(maxWidth * aspect));
+
+      try {
+        context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      } catch {
+        return null;
+      }
+
+      return canvas;
+    }
+
+    const { canvasWidth, canvasHeight } = this.request.scene;
+    const group = this.groups.get(layerId);
+
+    canvas.width = maxWidth;
+    canvas.height = Math.max(1, Math.round((maxWidth * canvasHeight) / canvasWidth));
+
+    // Take the picture without the selection outline and, for an adjustment
+    // layer, without the treatment that is about to be previewed.
+    this.interaction.setSuspended(true);
+
+    if (group) {
+      applyEffects(group, null, NO_EFFECTS, { timeMs: this.displayTime() });
+    }
+
+    try {
+      const shot = this.app.renderer.extract.canvas({
+        target: this.app.stage,
+        frame: new PIXI.Rectangle(0, 0, canvasWidth, canvasHeight),
+        resolution: maxWidth / canvasWidth,
+        clearColor: STAGE_BACKGROUND_COLOR,
+      });
+
+      context.drawImage(shot as CanvasImageSource, 0, 0, canvas.width, canvas.height);
+    } catch (error) {
+      console.error('[capture] Could not draw the canvas for look previews.', error);
+      return null;
+    } finally {
+      this.interaction.setSuspended(false);
+      this.syncGroupEffects();
+    }
+
+    return canvas;
+  }
+
+  /**
    * Releases every display object, video element, pending load and listener.
    * Call before destroying the Pixi application.
    */
@@ -330,6 +435,13 @@ export class RendererManager {
     for (const layerId of [...this.records.keys()]) {
       this.removeRecord(layerId);
     }
+
+    for (const group of this.groups.values()) {
+      clearEffectCache(group);
+      group.destroy();
+    }
+    this.groups.clear();
+    this.backdrop.destroy();
 
     this.layersById.clear();
   }
@@ -367,7 +479,9 @@ export class RendererManager {
   }
 
   private assetUrlFor(layer: Layer): string | null {
-    return layer.type === 'text' ? null : this.assets.get(layer.assetId)?.url ?? null;
+    return layer.type === 'image' || layer.type === 'video'
+      ? this.assets.get(layer.assetId)?.url ?? null
+      : null;
   }
 
   /** True when the set of loaded videos no longer matches what time requires. */
@@ -436,6 +550,10 @@ export class RendererManager {
         continue;
       }
 
+      if (layer.type === 'adjustment') {
+        continue;
+      }
+
       if (layer.type === 'text') {
         this.addRecord(layer, {
           kind: 'text',
@@ -460,11 +578,113 @@ export class RendererManager {
       }
     }
 
+    this.arrangeStage();
     this.interaction.sync(this.selectedLayerId);
   }
 
+  /** Adjustment layers of the current request, bottom-most first. */
+  private adjustmentLayers(): AdjustmentLayer[] {
+    return [...this.layersById.values()]
+      .filter((layer): layer is AdjustmentLayer => layer.type === 'adjustment')
+      .sort((a, b) => a.zIndex - b.zIndex);
+  }
+
+  /**
+   * Puts every display object under the right parent: the group of the
+   * nearest adjustment layer above it, or the stage when there is none.
+   * Groups nest the same way, so a higher adjustment layer also affects the
+   * result of a lower one. Draw order inside each parent follows `zIndex`.
+   */
+  private arrangeStage() {
+    const adjustments = this.adjustmentLayers();
+    const stage = this.app.stage;
+
+    for (const layer of adjustments) {
+      if (!this.groups.has(layer.id)) {
+        const group = new PIXI.Container();
+        group.label = `adjustment:${layer.id}`;
+        group.sortableChildren = true;
+        this.groups.set(layer.id, group);
+      }
+    }
+
+    const parentFor = (zIndex: number): PIXI.Container => {
+      const above = adjustments.find((layer) => layer.zIndex > zIndex);
+
+      return above ? this.groups.get(above.id) ?? stage : stage;
+    };
+    const place = (node: PIXI.Container, zIndex: number) => {
+      const parent = parentFor(zIndex);
+
+      if (node.parent !== parent) {
+        parent.addChild(node);
+      }
+    };
+
+    place(this.backdrop, -1);
+
+    for (const [layerId, record] of this.records) {
+      const layer = this.layersById.get(layerId);
+
+      if (layer) {
+        place(record.display, layer.zIndex);
+      }
+    }
+
+    for (const layer of adjustments) {
+      const group = this.groups.get(layer.id);
+
+      if (group) {
+        group.zIndex = layer.zIndex;
+        place(group, layer.zIndex);
+      }
+    }
+
+    // Groups whose adjustment layer is gone are empty by now.
+    for (const [layerId, group] of this.groups) {
+      if (this.layersById.get(layerId)?.type !== 'adjustment') {
+        this.groups.delete(layerId);
+        clearEffectCache(group);
+        group.removeFromParent();
+        group.destroy();
+      }
+    }
+
+    this.syncGroupEffects();
+  }
+
+  /** Applies each adjustment layer's look and effects to its group. */
+  private syncGroupEffects() {
+    if (this.groups.size === 0 || !this.request) {
+      return;
+    }
+
+    const { canvasWidth, canvasHeight } = this.request.scene;
+    const geometry = { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
+    const timeMs = this.displayTime();
+
+    for (const [layerId, group] of this.groups) {
+      const layer = this.layersById.get(layerId);
+      const on = Boolean(layer && layer.visible && this.isActive(layer));
+
+      // The whole canvas is filtered, not just the area the layers cover.
+      if (
+        !group.filterArea ||
+        group.filterArea.width !== canvasWidth ||
+        group.filterArea.height !== canvasHeight
+      ) {
+        group.filterArea = new PIXI.Rectangle(0, 0, canvasWidth, canvasHeight);
+      }
+
+      applyEffects(group, on ? layer?.look : null, on ? layer?.effects : NO_EFFECTS, {
+        timeMs,
+        geometry,
+      });
+    }
+  }
+
   private refreshRecord(record: DisplayRecord, layer: Layer, frame: LayerFrame) {
-    applyLayerState(record.display, layer, frame, this.isActive(layer));
+    applyLayerState(record.display, layer, frame, this.isActive(layer), this.displayTime());
     this.driveVideo(record, layer);
   }
 
@@ -604,6 +824,7 @@ export class RendererManager {
     this.interaction.attach(record.display, layer.id);
     this.records.set(layer.id, record);
     this.app.stage.addChild(record.display);
+    this.arrangeStage();
   }
 
   private removeRecord(layerId: string) {
@@ -623,7 +844,7 @@ export class RendererManager {
     const { display, video, driver } = record;
 
     display.removeFromParent();
-    clearFilterCache(display);
+    clearEffectCache(display);
     driver?.dispose();
 
     if (display instanceof PIXI.Sprite) {
