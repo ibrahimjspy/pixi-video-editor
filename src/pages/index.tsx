@@ -1,29 +1,61 @@
-// pages/index.tsx
 'use client';
 
-import Sidebar from '@/components/sidebar/Sidebar';
-import Timeline from '@/components/Timeline';
+import { useEffect } from 'react';
+import ProjectBar from '@/components/ProjectBar';
+import AssetShelf from '@/components/AssetShelf';
 import VideoPreview from '@/components/VideoPreview';
+import Timeline from '@/components/Timeline';
+import RightPanel from '@/components/inspector/RightPanel';
+import { useEditorShortcuts } from '@/components/useEditorShortcuts';
+import { useEditorStore } from '@/store/editorStore';
+import { startHiddenTabPause, startPlayheadClamp } from '@/store/playbackStore';
+
+/**
+ * The one restore of the saved project for this page load. Kept at module
+ * level so React's development double-invoke of effects cannot start a second
+ * restore that races the first.
+ */
+let hydration: Promise<boolean> | null = null;
 
 export default function Home() {
+  useEditorShortcuts();
+
+  useEffect(() => startPlayheadClamp(), []);
+  useEffect(() => startHiddenTabPause(), []);
+
+  // Restore the saved project first, then start saving. Starting autosave
+  // earlier could overwrite the saved project with the empty default one.
+  useEffect(() => {
+    let isActive = true;
+    let stopAutosave: (() => void) | null = null;
+
+    hydration ??= useEditorStore.getState().hydrateFromStorage();
+
+    void hydration.then(() => {
+      if (isActive) {
+        stopAutosave = useEditorStore.getState().startAutosave();
+      }
+    });
+
+    return () => {
+      isActive = false;
+      stopAutosave?.();
+    };
+  }, []);
+
   return (
-    <main className="flex h-screen bg-gray-100">
-      {/* Left Panel */}
-      <div className="w-1/4 bg-white border-r border-gray-300">
-        <Sidebar />
-      </div>
+    <main className="signal-shell">
+      <div className="signal-shell__glow signal-shell__glow--one" />
+      <div className="signal-shell__glow signal-shell__glow--two" />
+      <ProjectBar />
 
-      {/* Editor Area */}
-      <div className="w-3/4 flex flex-col">
-        {/* Video Preview */}
-        <div className="flex-grow flex items-center justify-center bg-gray-200">
+      <div className="signal-workspace">
+        <AssetShelf />
+        <div className="signal-workspace__center">
           <VideoPreview />
-        </div>
-
-        {/* Timeline (bottom panel) */}
-        <div className="h-40 border-t border-gray-300 bg-white">
           <Timeline />
         </div>
+        <RightPanel />
       </div>
     </main>
   );

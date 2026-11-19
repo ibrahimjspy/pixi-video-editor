@@ -1,38 +1,17 @@
 import * as PIXI from 'pixi.js';
-import { ImageElement } from '@/types/editor';
-import { applyFilters } from './filters';
-import { makeInteractive } from './interactivity';
 
-export const renderImage = (
-  element: ImageElement,
-  app: PIXI.Application,
-  onReady: (sprite: PIXI.Sprite) => void,
-) => {
+/**
+ * Decodes an image asset and wraps it in a sprite with its own texture.
+ *
+ * The sprite is returned unplaced: the RendererManager decides whether the
+ * layer is still wanted once decoding finishes and applies its latest state.
+ */
+export const loadImageSprite = async (url: string): Promise<PIXI.Sprite> => {
   const image = new Image();
-  image.src = element.url;
+  image.crossOrigin = 'anonymous';
+  image.src = url;
 
-  image
-    .decode()
-    .then(() => {
-      const texture = PIXI.Texture.from(image);
-      const sprite = new PIXI.Sprite(texture);
+  await image.decode();
 
-      sprite.width = app.screen.width;
-      sprite.height = app.screen.height;
-      sprite.x = element.x;
-      sprite.y = element.y;
-
-      const brightness =
-        typeof element.filters.brightness === 'number'
-          ? Math.max(0, Math.min(element.filters.brightness, 1))
-          : 1;
-
-      applyFilters(sprite, brightness, element.filters.contrast);
-      makeInteractive(sprite, element.id);
-
-      onReady(sprite);
-    })
-    .catch((err) => {
-      console.error('Error decoding image:', err);
-    });
+  return new PIXI.Sprite(PIXI.Texture.from(image));
 };

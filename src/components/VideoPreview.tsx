@@ -1,144 +1,254 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { useEditorStore } from '@/store/editorStore';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
-import { RendererManager } from '@/lib/renderer/RendererManager';
+import { RendererManager, RenderRequest } from '@/lib/renderer/RendererManager';
+import { useEditorStore } from '@/store/editorStore';
+import { usePlaybackStore } from '@/store/playbackStore';
+import { getAssetById, getCurrentLayers, getCurrentScene } from '@/lib/editor/defaults';
+import { setPreviewHandle } from '@/lib/renderer/previewHandle';
 
-const ASPECT_RATIOS = {
-  '16:9': { width: 800, height: 450 },
-  '9:16': { width: 450, height: 800 },
-};
-
-type AspectRatio = keyof typeof ASPECT_RATIOS;
-
+/**
+ * Owns the Pixi application lifecycle and keeps the active project scene in
+ * sync with its canvas representation.
+ *
+ * Pixi initialization is asynchronous. The cancellation guard prevents a
+ * completed initialization from attaching a canvas after React has unmounted
+ * the component, which is common during development's strict effect checks.
+ */
 const VideoPreview = () => {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const pixiAppRef = useRef<PIXI.Application | null>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const appRef = useRef<PIXI.Application | null>(null);
   const rendererRef = useRef<RendererManager | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
+  const [available, setAvailable] = useState<{ width: number; height: number } | null>(null);
 
-  const { width, height } = ASPECT_RATIOS[aspectRatio];
+  const project = useEditorStore((state) => state.project);
+  const selectLayer = useEditorStore((state) => state.selectLayer);
 
-  const elements = useEditorStore((state) => state.elements);
-  const selectedElementId = useEditorStore((state) => state.selectedElementId);
-  const selectedElement = elements.find((el) => el.id === selectedElementId);
+  const scene = getCurrentScene(project);
+  const layers = getCurrentLayers(project);
+  const selectedLayer = layers.find((layer) => layer.id === project.selection.layerId) ?? null;
 
-  // Setup Pixi
+  const assets = useMemo(() => {
+    return new Map(
+      project.assets.map((asset) => [asset.id, asset] as const),
+    );
+  }, [project.assets]);
+
+  // Scale the canvas element down (never up) so it fits the viewport panel.
+  const viewScale = available
+    ? Math.min(
+        1,
+        available.width / scene.canvasWidth,
+        available.height / scene.canvasHeight,
+      )
+    : 1;
+
+  const renderRequestRef = useRef<RenderRequest>({
+    scene,
+    layers,
+    assets,
+    selectedLayerId: project.selection.layerId,
+    onLayerSelect: selectLayer,
+  });
+  const viewScaleRef = useRef(viewScale);
+
+  renderRequestRef.current = {
+    scene,
+    layers,
+    assets,
+    selectedLayerId: project.selection.layerId,
+    onLayerSelect: selectLayer,
+  };
+  viewScaleRef.current = viewScale;
+
+  /**
+   * Renders the latest scene. The renderer resizes the canvas when the scene
+   * size changes, and `autoDensity` then writes pixel sizes onto the canvas
+   * style, so the fluid sizing is re-asserted afterwards: the wrapper div owns
+   * the on-screen size and the canvas simply fills it.
+   */
+  const syncRenderer = useCallback(() => {
+    const renderer = rendererRef.current;
+    const app = appRef.current;
+
+    if (!renderer || !app) {
+      return;
+    }
+
+    renderer.renderScene(renderRequestRef.current);
+    const { currentMs, isPlaying } = usePlaybackStore.getState();
+    renderer.setTime(currentMs, isPlaying);
+    renderer.setViewScale(viewScaleRef.current);
+    app.canvas.style.width = '100%';
+    app.canvas.style.height = '100%';
+  }, []);
+
+  // The Pixi application is created once; scene size changes only resize it.
   useEffect(() => {
-    if (!canvasRef.current) return;
+    const mount = containerRef.current;
+
+    if (!mount) {
+      return;
+    }
 
     const app = new PIXI.Application();
-    pixiAppRef.current = app;
+    let isCancelled = false;
+    let isInitialized = false;
+    let renderer: RendererManager | null = null;
+    const initialScene = renderRequestRef.current.scene;
 
     app
       .init({
-        width,
-        height,
-        backgroundColor: 0x000000,
+        width: initialScene.canvasWidth,
+        height: initialScene.canvasHeight,
+        backgroundColor: 0x0e1318,
+        antialias: true,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
       })
       .then(() => {
-        const canvas = app.canvas;
-        if (canvasRef.current && canvas) {
-          canvasRef.current.innerHTML = '';
-          canvasRef.current.appendChild(canvas);
+        isInitialized = true;
+
+        if (isCancelled || !containerRef.current) {
+          app.destroy(true, true);
+          return;
         }
 
-        rendererRef.current = new RendererManager(app);
-        rendererRef.current.renderAll(elements, videoRef); // initial render
+        containerRef.current.innerHTML = '';
+        containerRef.current.appendChild(app.canvas);
+        renderer = new RendererManager(app);
+        appRef.current = app;
+        rendererRef.current = renderer;
+        setPreviewHandle({ app, renderer });
+        syncRenderer();
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          console.error('Pixi preview could not be initialized.', error);
+        }
       });
 
     return () => {
-      app.destroy(true, { children: true });
-    };
-  }, [width, height]);
+      isCancelled = true;
 
-  // Re-render all elements when elements array changes
-  useEffect(() => {
-    if (!rendererRef.current) return;
-    rendererRef.current.renderAll(elements, videoRef);
-  }, [elements]);
-
-  const togglePlayPause = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        videoRef.current.play();
+      if (rendererRef.current === renderer) {
+        rendererRef.current = null;
+        setPreviewHandle(null);
       }
-      setIsPlaying(!isPlaying);
+      if (appRef.current === app) {
+        appRef.current = null;
+      }
+
+      renderer?.destroy();
+
+      if (isInitialized) {
+        app.destroy(true, true);
+      }
+    };
+  }, [syncRenderer]);
+
+  useEffect(() => {
+    syncRenderer();
+  }, [assets, layers, project.selection.layerId, scene, selectLayer, viewScale, syncRenderer]);
+
+  // The playhead drives the renderer directly, outside React, so a playing
+  // timeline never re-renders this component.
+  useEffect(
+    () =>
+      usePlaybackStore.subscribe((state, previous) => {
+        if (state.currentMs !== previous.currentMs || state.isPlaying !== previous.isPlaying) {
+          rendererRef.current?.setTime(state.currentMs, state.isPlaying);
+        }
+      }),
+    [],
+  );
+
+  // Track how much room the viewport panel has for the canvas.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport) {
+      return;
     }
-  };
+
+    const measure = () => {
+      const style = window.getComputedStyle(viewport);
+      const width =
+        viewport.clientWidth -
+        (parseFloat(style.paddingLeft) || 0) -
+        (parseFloat(style.paddingRight) || 0);
+      const height =
+        viewport.clientHeight -
+        (parseFloat(style.paddingTop) || 0) -
+        (parseFloat(style.paddingBottom) || 0);
+
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+
+      setAvailable((previous) =>
+        previous && previous.width === width && previous.height === height
+          ? previous
+          : { width, height },
+      );
+    };
+
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const selectedAsset =
+    selectedLayer && 'assetId' in selectedLayer
+      ? getAssetById(project, selectedLayer.assetId)
+      : null;
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: '2rem',
-        height: '100%',
-        background: 'linear-gradient(135deg, #e5e7eb, #f3f4f6)',
-      }}
-    >
-      {/* Aspect Ratio Selector */}
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ marginRight: '0.5rem', fontWeight: 500 }}>
-          Aspect Ratio:
-        </label>
-        <select
-          value={aspectRatio}
-          onChange={(e) => setAspectRatio(e.target.value as AspectRatio)}
-          style={{
-            padding: '0.25rem 0.5rem',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            backgroundColor: 'black',
-            color: 'white',
-          }}
-        >
-          {Object.keys(ASPECT_RATIOS).map((ratio) => (
-            <option key={ratio} value={ratio} style={{ color: '#333' }}>
-              {ratio}
-            </option>
-          ))}
-        </select>
+    <section className="signal-stage">
+      <div className="signal-stage__toolbar">
+        <div>
+          <p className="signal-kicker">Stage</p>
+          <h2>
+            {scene.aspectRatio} canvas · {scene.canvasWidth}×{scene.canvasHeight}
+          </h2>
+        </div>
+        <div className="signal-chip-group">
+          <span className="signal-chip signal-chip--neutral">{layers.length} layers</span>
+          <span className="signal-chip signal-chip--success">
+            {selectedLayer ? selectedLayer.name : 'No selection'}
+          </span>
+        </div>
       </div>
 
-      {/* Canvas Preview */}
-      <div
-        ref={canvasRef}
-        style={{
-          width,
-          height,
-          background:
-            'repeating-conic-gradient(#d1d5db 0% 25%, #e5e7eb 0% 50%) 50% / 20px 20px',
-          borderRadius: '8px',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-          overflow: 'hidden',
-        }}
-      />
-
-      {/* Play/Pause button for video */}
-      {selectedElement?.type === 'video' && (
-        <button
-          onClick={togglePlayPause}
+      <div ref={viewportRef} className="signal-stage__viewport">
+        <div className="signal-stage__backdrop" />
+        <div
+          ref={containerRef}
+          className="signal-stage__canvas"
           style={{
-            marginTop: '1rem',
-            padding: '0.5rem 1rem',
-            backgroundColor: '#3b82f6',
-            color: '#fff',
-            borderRadius: '4px',
-            border: 'none',
-            cursor: 'pointer',
+            width: scene.canvasWidth * viewScale,
+            height: scene.canvasHeight * viewScale,
           }}
-        >
-          {isPlaying ? 'Pause' : 'Play'}
-        </button>
-      )}
-    </div>
+        />
+      </div>
+
+      <div className="signal-stage__footer">
+        <div className="signal-inline-stats">
+          <span>Drag to move</span>
+          <span>Corner handles resize · Shift frees the aspect ratio</span>
+          <span>Space plays · S splits</span>
+        </div>
+        <div className="signal-inline-stats">
+          <span>{selectedAsset?.name ?? 'Select a layer for context'}</span>
+          <span>{selectedLayer?.animationPreset ?? 'No motion preset'}</span>
+        </div>
+      </div>
+    </section>
   );
 };
 
